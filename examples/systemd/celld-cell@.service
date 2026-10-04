@@ -1,0 +1,21 @@
+[Unit]
+Description=celld application %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=celld
+EnvironmentFile=/etc/celld/cells/%i.env
+StateDirectory=celld/%i
+WorkingDirectory=/var/lib/celld/%i
+ExecStart=/usr/local/bin/celld --listen ${CELLD_ADDR} --internal-listen ${CELLD_INTERNAL_ADDR} --trust-forwarded-headers
+Restart=always
+RestartSec=3
+TimeoutStopSec=90
+MemoryMax=256M
+CPUQuota=50%%
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target

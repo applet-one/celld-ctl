@@ -1,0 +1,7 @@
+# Generated from the celld-ctl registry; illustrative only.
+handle /APP_SLUG {
+  redir /APP_SLUG/ 308
+}
+handle /APP_SLUG/* {
+  reverse_proxy 127.0.0.1:APP_PORT
+}
