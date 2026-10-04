@@ -13,6 +13,7 @@ port `8000` and preserves the full request path. `/` is a read-only app director
 cargo build --release --locked
 cargo test --workspace --locked
 python3 scripts/test_deploy_keys.py
+python3 scripts/test_ssh_relay.py
 ```
 
 ## Getting started: A → B
@@ -67,6 +68,7 @@ JavaScript/TypeScript with npm/pnpm/Yarn projects.
 - [B. Dev-machine setup and SSH keys](docs/setup-cella.md)
 - [Host installation, migration, security and operations](docs/operations.md)
 - [Developer CLI](docs/cella.md)
+- [Owner SSH stdio relay (no Tailscale/TCP forwarding)](docs/ssh-stdio-relay.md)
 - [Architecture](docs/architecture.md)
 - [Implementation plan](docs/implementation-plan.md)
 - [Instance separation](docs/instance-separation.md)

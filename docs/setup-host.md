@@ -114,7 +114,13 @@ The dedicated listener is **loopback-only**, so the VM's ordinary hostname or
 HTTPS proxy does not automatically reach it. Arrange an approved private TCP
 path from developers/CI to `127.0.0.1:2222`.
 
-For example, install Tailscale separately, enroll the host and approved clients
+For **VM owners** with an existing administrator SSH login, an
+[SSH stdio relay](ssh-stdio-relay.md) provides a local-only path without Tailscale
+or SSH TCP forwarding. This reuses full administrator access; never distribute
+that credential to CI/developers.
+
+For independently restricted developer/CI access, for example, install Tailscale
+separately, enroll the host and approved clients
 in your tailnet, restrict access policy to approved identities and this port,
 and run on the host:
 

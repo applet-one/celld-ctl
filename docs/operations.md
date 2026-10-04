@@ -128,6 +128,11 @@ cannot carry raw SSH, and some VM platforms manage their own primary SSH daemon;
 installing a Match block into a dormant system sshd does not restrict that
 platform-managed access. Do not give CI a VM-owner/root access key as a shortcut.
 
+VM owners can alternatively use an [SSH stdio relay](ssh-stdio-relay.md)
+through their existing administrator login. This needs no Tailscale and does
+not request SSH TCP forwarding; it is not a replacement for separately scoped
+CI/developer connectivity because the outer credential still grants admin access.
+
 Provide an independent private TCP path, for example by enrolling the VM and
 approved developer/CI devices into your tailnet, then forwarding only this SSH
 service with Tailscale Serve (not public Funnel):

@@ -74,6 +74,11 @@ are not used. The application HTTPS hostname or ordinary VM-owner SSH address
 is **not necessarily** the deployment endpoint. Join the approved private
 network if required; a valid key alone cannot reach a loopback-only listener.
 
+If you are the VM owner and prefer existing administrator SSH rather than a
+tailnet, use the [SSH stdio relay](ssh-stdio-relay.md). It presents the dedicated
+service on your own `127.0.0.1:2222`; follow that guide for destination/fingerprint
+setup. No `cella` reinstall or TCP-forwarding permission is required.
+
 ## B4. Verify and enroll the dedicated SERVER host key
 
 Strict host-key checking is enabled; `cella` will not auto-trust a new server.

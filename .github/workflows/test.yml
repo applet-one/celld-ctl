@@ -15,6 +15,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: python3 scripts/test_deploy_keys.py
       - run: python3 scripts/test_load_test.py
+      - run: python3 scripts/test_ssh_relay.py
       - run: sh -n scripts/install-host.sh scripts/celld-run
   macos-developer:
     runs-on: macos-14
@@ -22,3 +23,4 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test -p cella --locked
+      - run: python3 scripts/test_ssh_relay.py
