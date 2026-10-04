@@ -19,7 +19,10 @@ install -o root -g root -m 644 "$REPO/examples/systemd/celld-cell@.service" /etc
 install -o root -g root -m 644 "$REPO/examples/ssh/cella-deploy.conf" /etc/ssh/sshd_config.d/60-cella-deploy.conf
 visudo -cf "$REPO/examples/ssh/cella-deploy.sudoers"
 install -o root -g root -m 440 "$REPO/examples/ssh/cella-deploy.sudoers" /etc/sudoers.d/cella-deploy
-[ -e /etc/ssh/cella-deploy/authorized_keys ] || install -o root -g root -m 600 /dev/null /etc/ssh/cella-deploy/authorized_keys
+[ ! -L /etc/ssh/cella-deploy/authorized_keys ] || { echo "Refusing symlink authorized_keys" >&2; exit 1; }
+[ -e /etc/ssh/cella-deploy/authorized_keys ] || install -o root -g root -m 644 /dev/null /etc/ssh/cella-deploy/authorized_keys
+chown root:root /etc/ssh/cella-deploy/authorized_keys
+chmod 644 /etc/ssh/cella-deploy/authorized_keys
 # Per-app journal namespaces bound verbose node logs without changing host journal policy.
 install -d -o root -g root -m 755 /etc/systemd/journald@celld.conf.d
 install -o root -g root -m 644 "$REPO/examples/systemd/journal-limits.conf" /etc/systemd/journald@celld.conf.d/limits.conf

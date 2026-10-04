@@ -36,7 +36,7 @@ class KeyTests(unittest.TestCase):
         self.run_cli('add', 'owner-laptop', str(self.key) + '.pub', '--kind', 'owner')
         self.assertTrue(keys.AUTHORIZED.read_text().startswith('restrict ssh-ed25519 '))
         self.assertIn('cella:owner:owner-laptop', keys.AUTHORIZED.read_text())
-        self.assertEqual(keys.AUTHORIZED.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(keys.AUTHORIZED.stat().st_mode & 0o777, 0o644)
         self.run_cli('list')
         self.run_cli('revoke', 'owner-laptop')
         self.assertEqual(keys.AUTHORIZED.read_text(), '')

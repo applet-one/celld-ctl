@@ -15,12 +15,17 @@ AUTHORIZED = Path('/etc/ssh/cella-deploy/authorized_keys')
 def atomic(path, data):
     fd, name = tempfile.mkstemp(prefix='.keys-', dir=path.parent)
     try:
-        os.fchmod(fd, 0o600)
+        os.fchmod(fd, 0o644)
         with os.fdopen(fd, 'w') as output:
             output.write(data)
             output.flush()
             os.fsync(output.fileno())
         os.replace(name, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     finally:
         if os.path.exists(name):
             os.unlink(name)
@@ -43,13 +48,28 @@ def main():
     with open(CONFIG / 'deploy-keys.lock', 'a') as lock:
         os.chmod(lock.name, 0o600)
         fcntl.flock(lock, fcntl.LOCK_EX)
-        inventory = CONFIG / 'deploy-keys.json'
-        keys = json.loads(inventory.read_text()) if inventory.exists() else {}
+        # The effective authorized_keys is the sole durable source of truth.
+        # No stale sidecar can re-authorize a revoked key after a crash.
+        keys = {}
+        for line in AUTHORIZED.read_text().splitlines():
+            if not line.strip():
+                continue
+            fields = line.split()
+            if len(fields) != 4 or fields[0] != 'restrict':
+                parser.error('Refusing to replace untracked authorized keys')
+            match = re.fullmatch(r'cella:(owner|ci):([a-zA-Z0-9_-]{1,64})', fields[3])
+            if not match or match[2] in keys:
+                parser.error('Refusing to replace untracked authorized keys')
+            with tempfile.NamedTemporaryFile(mode='w') as tmp:
+                tmp.write(' '.join(fields[1:3]) + '\n')
+                tmp.flush()
+                result = subprocess.run(['/usr/bin/ssh-keygen', '-lf', tmp.name], capture_output=True, text=True)
+            if result.returncode:
+                parser.error('Invalid installed public key')
+            keys[match[2]] = dict(kind=match[1], key=' '.join(fields[1:3]), fingerprint=result.stdout.split()[1])
         if args.op == 'list':
             print(json.dumps(keys, indent=2))
             return
-        if not inventory.exists() and AUTHORIZED.read_text().strip():
-            parser.error('Refusing to replace untracked authorized keys')
         if args.op == 'add':
             if args.label in keys:
                 parser.error('Label already exists; revoke first')
@@ -76,9 +96,7 @@ def main():
                 parser.error('Unknown label')
             del keys[args.label]
         rendered = ''.join(f'restrict {item["key"]} cella:{item["kind"]}:{label}\n' for label, item in sorted(keys.items()))
-        # Write effective authorization first: revocation takes effect even if inventory write fails.
         atomic(AUTHORIZED, rendered)
-        atomic(inventory, json.dumps(keys, indent=2) + '\n')
         print(f'{args.op}: {args.label}')
 
 if __name__ == '__main__':
