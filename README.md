@@ -24,6 +24,10 @@ celld-ctl deployments APP_SLUG
 celld-ctl backup
 ```
 
+The installer starts a separate, loopback-only deployment SSH daemon on port
+`2222`; it never replaces the primary host SSH service. Provide a private TCP
+access path before using it from developer machines or CI.
+
 Run locally as root. Remote deploy keys can access only the fixed, bounded JSON
 SSH transport, not the operator command surface or an arbitrary shell.
 
@@ -31,9 +35,9 @@ SSH transport, not the operator command surface or an arbitrary shell.
 
 ```sh
 cella dev --celld-version VERSION
-cella --host cella-deploy@HOST --identity /path/to/key deploy
-cella --host cella-deploy@HOST --identity /path/to/key status
-cella --host cella-deploy@HOST --identity /path/to/key deployments list
+cella --host cella-deploy@HOST --identity /path/to/key --ssh-port 2222 deploy
+cella --host cella-deploy@HOST --identity /path/to/key --ssh-port 2222 status
+cella --host cella-deploy@HOST --identity /path/to/key --ssh-port 2222 deployments list
 ```
 
 `deploy` auto-provisions the Worker name, downloads/caches the exact host-pinned

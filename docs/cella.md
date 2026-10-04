@@ -178,3 +178,11 @@ restricted SSH requests/environment, supported platforms, actual asset URL
 shapes, exact pin checking, download/cache failures, native validation failure
 propagation, activation gating, history/logs, and host-free local development.
 Fake binaries/SSH/curl use temporary directories; no network or AWS is needed.
+
+## Dedicated host transport port
+
+The bundled host installer uses a separate deployment-only SSH daemon bound to
+`127.0.0.1:2222`; primary/platform SSH is unchanged. Set `CELLA_SSH_PORT=2222`
+(or `--ssh-port 2222`) and arrange an approved private TCP access path, as
+explained in [host operations](operations.md#private-remote-transport-connectivity).
+Developer storage credentials remain local even when that path uses a tailnet.

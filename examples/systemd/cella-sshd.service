@@ -1,0 +1,20 @@
+[Unit]
+Description=Restricted celld deployment SSH transport (loopback only)
+After=network.target
+
+[Service]
+Type=simple
+RuntimeDirectory=cella-sshd
+RuntimeDirectoryMode=0755
+ExecStartPre=/usr/bin/install -d -o root -g root -m 0755 /run/sshd
+ExecStartPre=/usr/sbin/sshd -t -f /etc/celld-ctl/sshd_config
+ExecStart=/usr/sbin/sshd -D -e -f /etc/celld-ctl/sshd_config
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=3
+TasksMax=128
+MemoryMax=256M
+LogNamespace=celld
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,25 @@
+# Separate deployment-only OpenSSH daemon. Never modify the host's primary SSH.
+Port 2222
+ListenAddress 127.0.0.1
+HostKey /etc/celld-ctl/ssh-host-ed25519-key
+PidFile /run/cella-sshd/sshd.pid
+AllowUsers cella-deploy
+AuthorizedKeysFile /etc/ssh/cella-deploy/authorized_keys
+AuthenticationMethods publickey
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+UsePAM yes
+StrictModes yes
+PermitTTY no
+DisableForwarding yes
+PermitTunnel no
+PermitUserRC no
+PermitUserEnvironment no
+ForceCommand /usr/bin/sudo -n /usr/local/bin/celld-ctl transport
+LoginGraceTime 30
+MaxAuthTries 3
+MaxSessions 2
+MaxStartups 10:30:20
+LogLevel VERBOSE

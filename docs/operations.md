@@ -16,7 +16,8 @@ sudo scripts/install-host.sh
 ```
 
 The installer installs binaries, the systemd template, bounded application
-journal namespace, a locked-down SSH deploy account, and its narrow sudo rule.
+journal namespace, a locked-down SSH deploy account, a separate loopback-only `cella-sshd` daemon
+on port `2222`, and its narrow sudo rule. The primary SSH service is untouched.
 It does **not** migrate an existing service, replace a running Caddy configuration,
 add deploy keys, install celld releases, or write storage credentials for you.
 Inspect templates and back up existing configuration before installation.
@@ -106,6 +107,46 @@ possession. CI should have a distinct revocable key, not a copy of the owner's.
 Revocation blocks new SSH authentication; terminate existing deploy-account
 sessions explicitly when immediate revocation is required.
 
+## Private remote transport connectivity
+
+The dedicated SSH service binds **only** `127.0.0.1:2222`. Local transport tests
+are not proof of connectivity from a developer's laptop. Ordinary HTTP proxies
+cannot carry raw SSH, and some VM platforms manage their own primary SSH daemon;
+installing a Match block into a dormant system sshd does not restrict that
+platform-managed access. Do not give CI a VM-owner/root access key as a shortcut.
+
+Provide an independent private TCP path, for example by enrolling the VM and
+approved developer/CI devices into your tailnet, then forwarding only this SSH
+service with Tailscale Serve (not public Funnel):
+
+```sh
+sudo tailscale serve --bg --tcp=2222 tcp://127.0.0.1:2222
+# From an approved tailnet client:
+export CELLA_HOST=cella-deploy@TAILNET_HOST
+export CELLA_SSH_PORT=2222
+export CELLA_SSH_KEY=/path/to/restricted-deploy-key
+cella deploy
+```
+
+Follow the [official Serve TCP documentation](https://tailscale.com/docs/reference/tailscale-cli/serve)
+and restrict tailnet policy to approved owner/CI identities and this port. Tailnet
+enrollment/credentials and ACL policy are operator instance state, never source
+artifacts; the installer does not join an account automatically. No celld
+serving/internal port is forwarded. The HTTPS application proxy remains private.
+
+Enroll the dedicated server's public host key in the client's `known_hosts`
+after comparing its fingerprint through a trusted operator channel:
+
+```sh
+sudo ssh-keygen -lf /etc/celld-ctl/ssh-host-ed25519-key.pub
+```
+
+`cella` deliberately uses strict host-key verification. Its SSH port defaults to
+22 for ordinary SSH environments; use `--ssh-port 2222` or `CELLA_SSH_PORT=2222`
+for this installed daemon. The old `cella-deploy.conf` is an optional legacy
+Match fragment for operators with a conventional primary OpenSSH service; the
+installer no longer installs it or reloads the primary SSH service.
+
 ## Counter migration
 
 An existing bucket-root counter is a special imported legacy app. Do not move
@@ -128,7 +169,7 @@ revision. Roll back by checking out the chosen prior Git revision and running
 `cella deploy`; this uses the same pinned native parser and deployment engine.
 This does not revert Durable Object data/schema migrations.
 
-Back up the registry and root-only configuration with `sudo celld-ctl backup`
+Back up the registry and root-only configuration and dedicated SSH server identity with `sudo celld-ctl backup`
 (the destination is under `/var/lib/celld-ctl/backups`) and store the result securely off-host. Only snapshots with a `COMPLETE` marker
 are complete; configuration, app environments and units have separate subdirectories. Registry/config backups contain
 node credentials; they are not public artifacts. Object-store durability does
