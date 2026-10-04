@@ -148,9 +148,11 @@ dependencies = [
 
 [[package]]
 name = "cella"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
+ "celld-ctl-core",
  "clap",
  "flate2",
  "semver",
@@ -161,9 +163,10 @@ dependencies = [
 
 [[package]]
 name = "celld-ctl"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "celld-ctl-core",
  "chrono",
  "fs2",
@@ -180,8 +183,9 @@ dependencies = [
 
 [[package]]
 name = "celld-ctl-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
+ "base64 0.22.1",
  "serde",
  "serde_json",
 ]
