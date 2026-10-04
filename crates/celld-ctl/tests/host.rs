@@ -635,3 +635,12 @@ fn backup_includes_dedicated_ssh_daemon_and_private_host_identity() {
         .windows(b"PRIVATE_TEST_HOST_KEY_NOT_".len())
         .any(|v| v == b"PRIVATE_TEST_HOST_KEY_NOT_"));
 }
+
+#[test]
+fn caddy_forwarded_host_fallback_preserves_the_incoming_port() {
+    let f = Fixture::new();
+    let rendered = render::caddy(&[], &f.paths);
+    assert!(rendered.contains("\"\" {http.request.hostport}"));
+    assert!(!rendered.contains("{http.request.host}"));
+    assert!(rendered.contains("default {http.request.header.X-Forwarded-Host}"));
+}
