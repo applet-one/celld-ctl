@@ -200,7 +200,7 @@ fn activation_records_revision_only_after_readiness_and_routes() {
         .runtime
         .calls
         .iter()
-        .position(|s| s == "reload-caddy")
+        .rposition(|s| s == "reload-caddy")
         .unwrap();
     assert!(ready < publish);
     assert!(m.runtime.loaded.contains("handle /app/*"));
@@ -643,4 +643,46 @@ fn caddy_forwarded_host_fallback_preserves_the_incoming_port() {
     assert!(rendered.contains("\"\" {http.request.hostport}"));
     assert!(!rendered.contains("{http.request.host}"));
     assert!(rendered.contains("default {http.request.header.X-Forwarded-Host}"));
+}
+
+#[test]
+fn disable_reconciles_a_live_route_left_by_a_crash_after_sql_was_disabled() {
+    let f = Fixture::new();
+    let mut m = activated(&f, "app");
+    m.registry.enabled("app", false).unwrap();
+    assert!(m.runtime.loaded.contains("handle /app/*"));
+    m.runtime.calls.clear();
+    m.lifecycle("disable", "app").unwrap();
+    assert!(!m.runtime.loaded.contains("handle /app/*"));
+    assert!(!fs::read_to_string(&f.paths.caddy)
+        .unwrap()
+        .contains("handle /app/*"));
+    assert!(!m.registry.get("app").unwrap().target.enabled);
+    let reload = m
+        .runtime
+        .calls
+        .iter()
+        .position(|s| s == "reload-caddy")
+        .unwrap();
+    let stop = m
+        .runtime
+        .calls
+        .iter()
+        .position(|s| s == "stop:celld-cell@app.service")
+        .unwrap();
+    assert!(reload < stop);
+}
+#[test]
+fn failed_withdrawal_restores_the_previous_disabled_registry_flag() {
+    let f = Fixture::new();
+    let mut m = f.manager();
+    m.provision("app").unwrap();
+    m.runtime.fail_validate = true;
+    assert!(m.lifecycle("disable", "app").is_err());
+    assert!(!m.registry.get("app").unwrap().target.enabled);
+    assert!(!m
+        .runtime
+        .calls
+        .iter()
+        .any(|s| s == "stop:celld-cell@app.service"));
 }

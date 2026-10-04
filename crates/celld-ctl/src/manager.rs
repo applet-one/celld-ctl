@@ -276,14 +276,16 @@ impl<R: Runtime> Manager<R> {
         }
         Ok(())
     }
+    /// SQLite and Caddy cannot share a transaction. Reapply the desired route
+    /// state even when SQL already says disabled: a crash may have happened
+    /// between the registry update and the external reload. After interruption,
+    /// rerunning disable/stop/activation reconciles this known slug's routes.
     fn unpublish(&mut self, slug: &str) -> Result<()> {
-        let app = self.registry.get(slug)?;
-        if app.target.enabled {
-            self.registry.enabled(slug, false)?;
-            if let Err(e) = self.sync_routes() {
-                self.registry.enabled(slug, true)?;
-                return Err(e);
-            }
+        let was_enabled = self.registry.get(slug)?.target.enabled;
+        self.registry.enabled(slug, false)?;
+        if let Err(e) = self.sync_routes() {
+            self.registry.enabled(slug, was_enabled)?;
+            return Err(e);
         }
         Ok(())
     }
