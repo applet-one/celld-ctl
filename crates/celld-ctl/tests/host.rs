@@ -589,3 +589,49 @@ fn atomic_public_modes_survive_private_umask() {
         0o600
     );
 }
+
+#[test]
+fn backup_includes_dedicated_ssh_daemon_and_private_host_identity() {
+    let f = Fixture::new();
+    let mut m = f.manager();
+    for (path, contents) in [
+        (
+            &f.paths.dedicated_ssh_config,
+            "Port 2222\nListenAddress 127.0.0.1\n",
+        ),
+        (
+            &f.paths.ssh_host_key,
+            "PRIVATE_TEST_HOST_KEY_NOT_A_REAL_KEY",
+        ),
+        (&f.paths.ssh_host_public_key, "ssh-ed25519 TEST_HOST_KEY"),
+        (
+            &f.paths.ssh_service,
+            "[Service]\nExecStart=/usr/sbin/sshd -D\n",
+        ),
+    ] {
+        fs::write(path, contents).unwrap();
+    }
+    let result = m.backup().unwrap();
+    let root = Path::new(result["backup"].as_str().unwrap());
+    for name in [
+        "ssh/sshd_config",
+        "ssh/ssh-host-ed25519-key",
+        "ssh/ssh-host-ed25519-key.pub",
+        "units/cella-sshd.service",
+    ] {
+        assert!(root.join(name).is_file());
+        assert_eq!(
+            fs::metadata(root.join(name)).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    assert_eq!(
+        fs::read_to_string(root.join("ssh/ssh-host-ed25519-key")).unwrap(),
+        "PRIVATE_TEST_HOST_KEY_NOT_A_REAL_KEY"
+    );
+    assert_eq!(result["contains_credentials"], true);
+    assert!(!fs::read(&f.paths.registry)
+        .unwrap()
+        .windows(b"PRIVATE_TEST_HOST_KEY_NOT_".len())
+        .any(|v| v == b"PRIVATE_TEST_HOST_KEY_NOT_"));
+}

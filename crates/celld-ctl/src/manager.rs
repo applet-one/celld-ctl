@@ -449,6 +449,13 @@ impl<R: Runtime> Manager<R> {
             (&self.paths.authorized_keys, "ssh/authorized_keys"),
             (&self.paths.ssh_config, "ssh/60-cella-deploy.conf"),
             (&self.paths.sudoers, "ssh/cella-deploy.sudoers"),
+            (&self.paths.dedicated_ssh_config, "ssh/sshd_config"),
+            (&self.paths.ssh_host_key, "ssh/ssh-host-ed25519-key"),
+            (
+                &self.paths.ssh_host_public_key,
+                "ssh/ssh-host-ed25519-key.pub",
+            ),
+            (&self.paths.ssh_service, "units/cella-sshd.service"),
         ] {
             if source.exists() {
                 files.push((source.clone(), PathBuf::from(name)));
@@ -480,7 +487,9 @@ impl<R: Runtime> Manager<R> {
         for (source, name) in files {
             self.paths.check_file(
                 &source,
-                source == self.paths.credentials || source == self.paths.config,
+                source == self.paths.credentials
+                    || source == self.paths.config
+                    || source == self.paths.ssh_host_key,
             )?;
             let data = fs::read(source)?;
             atomic_write(&self.paths, &dest.join(name), &data, 0o600)?;
