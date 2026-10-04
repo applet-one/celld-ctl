@@ -257,6 +257,10 @@ pub fn atomic_write(paths: &Paths, path: &Path, bytes: &[u8], mode: u32) -> Resu
             .mode(mode)
             .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
             .open(&tmp)?;
+        // The entry point uses umask 077 so SQLite and lock files are private
+        // at creation. Explicitly restore the requested output mode on this
+        // already-open, exclusively created inode (HTML/Caddy need 0644).
+        f.set_permissions(fs::Permissions::from_mode(mode))?;
         f.write_all(bytes)?;
         f.sync_all()?;
         drop(f);

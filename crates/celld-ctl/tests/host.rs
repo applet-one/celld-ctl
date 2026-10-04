@@ -559,3 +559,33 @@ fn cli_rejects_arbitrary_remote_command_before_any_host_io() {
         .contains("SSH command rejected"));
     assert!(output.stderr.is_empty());
 }
+
+#[test]
+fn atomic_public_modes_survive_private_umask() {
+    // Isolate the process-global umask from parallel tests.
+    if std::env::var_os("CELLD_CTL_TEST_UMASK").is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "atomic_public_modes_survive_private_umask"])
+            .env("CELLD_CTL_TEST_UMASK", "1")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    unsafe {
+        libc::umask(0o077);
+    }
+    let f = Fixture::new();
+    let public = f._root.path().join("public.html");
+    atomic_write(&f.paths, &public, b"public", 0o644).unwrap();
+    assert_eq!(
+        fs::metadata(public).unwrap().permissions().mode() & 0o777,
+        0o644
+    );
+    let private = f._root.path().join("private.env");
+    atomic_write(&f.paths, &private, b"private", 0o600).unwrap();
+    assert_eq!(
+        fs::metadata(private).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+}
