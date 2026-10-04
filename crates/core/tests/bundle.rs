@@ -152,3 +152,29 @@ fn strict_json_fields_and_string_limits() {
     v["modules"][0]["mode"] = json!(493);
     assert!(serde_json::from_slice::<PreparedBundle>(&serde_json::to_vec(&v).unwrap()).is_err());
 }
+
+#[test]
+fn distinct_directory_budget_is_enforced_before_materialization_without_a_depth_cap() {
+    let mut b = PreparedBundle {
+        config: json!({"name":"worker","main":"index.js","assets":{"directory":"assets"}}),
+        modules: vec![file("index.js", b"")],
+        assets: (0..MAX_UPLOAD_FILES - 1)
+            .map(|i| file(&format!("d{i}/inner/file"), b""))
+            .collect(),
+    };
+    // Two roots + 4095 disjoint directory pairs is exactly the 8192 budget.
+    assert_eq!(
+        celld_ctl_core::MAX_STAGING_DIRECTORIES,
+        2 + 2 * (MAX_UPLOAD_FILES - 1)
+    );
+    b.normalize().unwrap();
+    b.assets[0].path = "d0/inner/extra/file".into();
+    assert!(b
+        .normalize()
+        .unwrap_err()
+        .contains("8192 staging directories"));
+    // Preserve the existing 512-byte relative-path contract: >16 components
+    // is fine when the global distinct-directory budget is respected.
+    b.assets = vec![file(&format!("{}file", "dir/".repeat(30)), b"")];
+    b.normalize().unwrap();
+}

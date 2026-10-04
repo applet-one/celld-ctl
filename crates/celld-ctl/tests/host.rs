@@ -871,3 +871,35 @@ fn ssh_status_uses_minimal_target_but_operator_status_retains_registry_details()
     assert_eq!(status["target"].as_object().unwrap().len(), 3);
     assert!(status["target"].get("bucket").is_none());
 }
+
+#[test]
+fn pathological_directory_expansion_is_rejected_before_staging_or_native_commands() {
+    let f = Fixture::new();
+    let mut m = f.manager();
+    m.provision("app").unwrap();
+    m.runtime.calls.clear();
+    let mut bundle = prepared();
+    bundle.config["assets"] = json!({"directory":"assets"});
+    bundle.assets = (0..celld_ctl_core::MAX_UPLOAD_FILES - 1)
+        .map(|i| celld_ctl_core::UploadFile {
+            path: format!("d{i}/inner/deeper/file"),
+            content: String::new(),
+        })
+        .collect();
+    let request = deploy_request(&bundle);
+    let body = serde_json::to_vec(&bundle).unwrap();
+    let mut frame = serde_json::to_vec(&request).unwrap();
+    frame.push(b'\n');
+    frame.extend(body);
+    assert!(celld_ctl::transport::parse_input(&frame)
+        .unwrap_err()
+        .to_string()
+        .contains("8192 staging directories"));
+    assert!(m
+        .deploy(request, bundle)
+        .unwrap_err()
+        .to_string()
+        .contains("8192 staging directories"));
+    assert!(m.runtime.calls.is_empty());
+    assert!(!f.paths.state.join("staging").exists());
+}

@@ -10,6 +10,8 @@ pub const MAX_BUNDLE_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_DECODED_BYTES: usize = 24 * 1024 * 1024;
 pub const MAX_UPLOAD_FILES: usize = 4096;
 pub const MAX_CONFIG_BYTES: usize = 64 * 1024;
+/// Includes the modules/ and assets/ roots; no additional per-path depth limit.
+pub const MAX_STAGING_DIRECTORIES: usize = 8192;
 pub mod bundle;
 pub use bundle::{valid_upload_path, PreparedBundle, UploadFile};
 

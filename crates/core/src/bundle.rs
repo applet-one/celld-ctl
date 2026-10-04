@@ -1,5 +1,5 @@
 //! Uploads contain data, never archive entries, symlinks, build commands or host paths.
-use crate::{MAX_CONFIG_BYTES, MAX_DECODED_BYTES, MAX_UPLOAD_FILES};
+use crate::{MAX_CONFIG_BYTES, MAX_DECODED_BYTES, MAX_STAGING_DIRECTORIES, MAX_UPLOAD_FILES};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{
     de::{self, SeqAccess, Visitor},
@@ -187,6 +187,10 @@ impl PreparedBundle {
             return Err("bundle config needs main or assets".into());
         }
         let mut total = 0usize;
+        // Bound inode/directory work before any materialization. Counting only
+        // files would allow thousands of individually short, deeply nested paths
+        // to create hundreds of thousands of root-owned directories.
+        let mut directories = BTreeSet::from(["modules".to_owned(), "assets".to_owned()]);
         for (kind, files) in [("modules", &self.modules), ("assets", &self.assets)] {
             let mut paths = BTreeSet::new();
             for file in files {
@@ -204,6 +208,10 @@ impl PreparedBundle {
                     return Err("duplicate upload path".into());
                 }
                 for (at, _) in file.path.match_indices('/') {
+                    directories.insert(format!("{kind}/{}", &file.path[..at]));
+                    if directories.len() > MAX_STAGING_DIRECTORIES {
+                        return Err("bundle exceeds 8192 staging directories".into());
+                    }
                     if paths.contains(&file.path[..at]) {
                         return Err("upload file/directory path collision".into());
                     }
