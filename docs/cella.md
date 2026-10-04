@@ -1,5 +1,10 @@
 # cella: local development and SSH-only deployment
 
+First complete **[A. Host setup](setup-host.md)**, then follow
+**[B. Configure cella on your dev machine](setup-cella.md)**. B includes generating
+a dedicated SSH key, operator enrollment and verified `known_hosts` setup. This
+page is the detailed client/protocol reference, not the onboarding checklist.
+
 `cella` is the developer client, separate from the host/operator `celld-ctl`.
 Keep your existing `wrangler.jsonc` (or `wrangler.json`). **Deployment requires
 only the restricted SSH connection: no local R2 credentials, bucket name,
@@ -18,6 +23,9 @@ bundling is required. `cella` does not run package installs. `curl` is required
 for exact native release downloads, and OpenSSH for remote operations.
 
 ## Configure SSH once
+
+If you have not created/enrolled a key and verified the server identity, follow
+[B2–B4](setup-cella.md#b2-generate-a-dedicated-deployment-key) first.
 
 ```sh
 export CELLA_HOST=cella-deploy@PRIVATE_HOST

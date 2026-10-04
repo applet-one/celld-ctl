@@ -1,5 +1,9 @@
 # Host installation and operations
 
+Start with **[A. Set up celld-ctl on the host](setup-host.md)**, then give
+developers **[B. Dev-machine setup](setup-cella.md)**. This page is the operator
+reference for lifecycle, migration, key management, backups and security.
+
 This is a single-host MVP, not a multi-tenant security boundary. All deploy keys
 are trusted fleet publishers; keys are not scoped to individual apps. The runtime
 uses celld's Worker isolation and a dedicated shared Unix service account. No
@@ -86,6 +90,12 @@ delete durable object-store data; retained local state should be archived or
 removed deliberately by the operator, not a remote developer.
 
 ## Restricted deployment keys
+
+Developers first generate a dedicated key on their own machine using
+[B2. Generate a deployment key](setup-cella.md#b2-generate-a-dedicated-deployment-key).
+Receive only the public `.pub` file through an authenticated administrator
+channel, then run the following **on the host**. Do not use `ssh-copy-id` or
+SFTP through the restricted account.
 
 ```sh
 sudo celld-deploy-key add owner-laptop /path/to/owner.pub --kind owner

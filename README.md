@@ -15,41 +15,56 @@ cargo test --workspace --locked
 python3 scripts/test_deploy_keys.py
 ```
 
-## Host operator
+## Getting started: A → B
 
-```text
-celld-ctl create|enable|disable|start|stop|restart|status|logs|target|reload|remove APP_SLUG
-celld-ctl list
-celld-ctl deployments APP_SLUG
-celld-ctl backup
-```
+### A. Set up celld-ctl on the host machine
 
-The installer starts a separate, loopback-only deployment SSH daemon on port
-`2222`; it never replaces the primary host SSH service. Provide a private TCP
-access path before using it from developer machines or CI.
+**On the Linux VM/server, as its administrator:**
 
-Run locally as root. Remote deploy keys can access only the fixed, bounded JSON
-SSH transport, not the operator command surface or an arbitrary shell.
+1. Build/install `celld-ctl` and the exact pinned native celld release.
+2. Configure the host's bucket and private storage credentials.
+3. Initialize Caddy and arrange private access to deployment SSH on port `2222`.
+4. Enroll developers' **public** deploy keys with `celld-deploy-key`.
+5. Give developers the private hostname/port and dedicated server-key fingerprint.
 
-## Developer
+Follow **[A. Host setup](docs/setup-host.md)** for commands and the readiness checklist.
+The installer never replaces your administrator/platform SSH service or joins a
+private network automatically. Each deploy key is a trusted fleet-wide publisher.
+
+### B. Configure and set up cella on your dev machine
+
+**On your laptop/workstation or CI runner—not on the host VM:**
+
+1. Install/update `cella` (client and host must be `0.2.0` or later).
+2. Generate a dedicated key; send only its `.pub` file to the host operator.
+3. Configure the private SSH destination, explicit key file and port.
+4. Verify the server fingerprint and enroll its key in `known_hosts`.
+5. In your existing Wrangler project, run `cella deploy`.
+
+Follow **[B. Dev-machine setup](docs/setup-cella.md)** for key-generation,
+public-key enrollment, server verification, configuration and troubleshooting.
+**Developers and CI need no R2 credentials or bucket configuration.** Keep private
+keys on the dev machine/CI secret store, never in Wrangler or this repository.
+
+Once B is complete, daily usage is:
 
 ```sh
-cella dev --celld-version VERSION
-cella --host cella-deploy@HOST --identity /path/to/key --ssh-port 2222 deploy
-cella --host cella-deploy@HOST --identity /path/to/key --ssh-port 2222 status
-cella --host cella-deploy@HOST --identity /path/to/key --ssh-port 2222 deployments list
+cella deploy
+cella status
+cella logs --lines 50
+cella deployments list
 ```
 
-`deploy` auto-provisions the Worker name, downloads/caches the exact host-pinned
-release, finds local esbuild, builds locally with native `celld deploy --dry-run`, and sends a bounded
-prepared package over restricted SSH. The host publishes with its own storage
-configuration and credentials, then activates or reloads the node. **Developers
-and CI need only SSH settings—no R2 credentials or bucket configuration.**
-Use client/host version 0.2.0 or later. Initially supported: Linux x86_64,
-Linux arm64 and macOS arm64; JavaScript/TypeScript with npm/pnpm/Yarn projects.
+`deploy` auto-provisions the Worker name, obtains the exact host-pinned release,
+builds locally, and sends a bounded prepared package over restricted SSH. The
+host publishes with its own storage credentials, then activates/reloads the app.
+Initially supported: Linux x86_64/arm64 and macOS arm64 developer machines;
+JavaScript/TypeScript with npm/pnpm/Yarn projects.
 
 ## Documentation
 
+- [A. Host setup](docs/setup-host.md)
+- [B. Dev-machine setup and SSH keys](docs/setup-cella.md)
 - [Host installation, migration, security and operations](docs/operations.md)
 - [Developer CLI](docs/cella.md)
 - [Architecture](docs/architecture.md)
