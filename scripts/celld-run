@@ -1,0 +1,8 @@
+#!/bin/sh
+# Root-generated per-app EnvironmentFile pins this path. No user-provided shell text.
+set -eu
+case "${CELLD_BIN:-}" in
+ /usr/local/lib/celld/releases/v*/celld) ;;
+ *) echo 'Invalid pinned celld binary' >&2; exit 1 ;;
+esac
+exec "$CELLD_BIN" "$@"
