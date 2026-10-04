@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check a reachable, enrolled deployment key's real SSH policy (no app mutations)."""
 import argparse
+import base64
 import json
 import os
 import re
@@ -43,6 +44,25 @@ def main():
     result = run('celld-ctl-transport', b'x' * (16 * 1024 + 1))
     require(result.returncode != 0 and json.loads(result.stdout).get('ok') is False, 'oversized request was not rejected')
     checks += 1
+    # Deploy framing and package rejection are checked without publishing: any
+    # structurally valid example deliberately has a nonmatching expected version.
+    pin = json.loads(baseline.stdout)['result']['target']['celld_version']
+    package = dict(config=dict(name=args.slug, main='index.js', compatibility_date='2026-01-01'),
+                   modules=[dict(path='index.js', content=base64.b64encode(b'export default {};').decode())], assets=[])
+    body = json.dumps(package).encode()
+    header = dict(op='deploy', slug=args.slug, celld_version=pin, version_id='0000000000000000', source_revision=None, bundle_size=len(body))
+    samples = [json.dumps(header).encode() + b'\n' + body[:-1],
+               json.dumps(header).encode() + b'\n' + body + b'extra',
+               json.dumps(dict(header, bundle_size=32 * 1024 * 1024 + 1)).encode() + b'\n',
+               json.dumps(dict(header, bucket='s3://client-chosen')).encode() + b'\n' + body]
+    for module_path in ['../escape.js', '/etc/celld/node.env']:
+        hostile = dict(package, modules=[dict(path=module_path, content='eA==')])
+        payload = json.dumps(hostile).encode()
+        samples.append(json.dumps(dict(header, bundle_size=len(payload))).encode() + b'\n' + payload)
+    for sample in samples:
+        result = run('celld-ctl-transport', sample)
+        require(result.returncode != 0 and json.loads(result.stdout).get('ok') is False, 'invalid deploy frame/package was not rejected')
+        checks += 1
     forwarded = subprocess.run(flags + ['-W', '127.0.0.1:8000', '--', args.host], input=b'', capture_output=True, env=env, timeout=30)
     require(forwarded.returncode != 0 and b'administratively prohibited' in forwarded.stderr, 'TCP forwarding was not rejected')
     checks += 1

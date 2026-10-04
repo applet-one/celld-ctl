@@ -30,9 +30,10 @@ new apps' pin; changing the default does not upgrade existing apps.
 
 Write only the node's storage credential variables to `/etc/celld/node.env`,
 root-owned mode `0600` (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional
-`AWS_SESSION_TOKEN`). Use separate least-privilege developer/CI storage
-credentials where practical. `target` intentionally contains the endpoint,
-bucket prefix, region and version, but **never** credential values.
+`AWS_SESSION_TOKEN`). The host uses these for native publication as well as
+serving. Developers and CI do not need storage credentials or bucket settings.
+Restricted transport targets contain only the slug, exact native version and
+enabled flag; the root operator can still inspect full registry targets.
 
 Celld and internal/operator listeners bind to loopback. Only Caddy binds to
 `:8000`; keep the upstream HTTPS proxy private. Incoming forwarded host/proto
@@ -100,9 +101,11 @@ tunnels and user startup scripts. The account's `/bin/sh` exists only so sshd
 can launch its forced command; it does not grant an interactive shell.
 
 `sudo` allows exactly `/usr/local/bin/celld-ctl transport`, not arbitrary host
-commands or configurable paths. The transport accepts one bounded JSON request
-and rejects extra fields/unknown operations. Its allowlist is provision, target,
-activate, status, logs and deployments. Authentication is SSH public-key
+commands or configurable paths. Ordinary requests are bounded JSON; deploy
+adds a size-declared prepared-package body with independent bounds. The transport
+rejects extra fields/unknown operations. Its allowlist is provision, target, deploy,
+activate, status, logs and deployments. Deployers cannot choose storage endpoints,
+buckets, host paths, build executables or environment variables. Authentication is SSH public-key
 possession. CI should have a distinct revocable key, not a copy of the owner's.
 Revocation blocks new SSH authentication; terminate existing deploy-account
 sessions explicitly when immediate revocation is required.
@@ -211,3 +214,26 @@ requests and TCP forwarding. Do not confuse a failed connection with a passed
 policy check. Key revocation can be verified by retrying a **new** connection
 after revoking its label; existing sessions need separate termination if immediate
 revocation is required.
+
+## Host-side publication
+
+The installer creates a separate `celld-publish` system account with no login
+shell. Prepared packages are staged outside the source tree under
+`/var/lib/celld-ctl/staging`, with root-owned immutable files readable only by
+the publisher group. Packages contain built modules and explicit assets, not
+repositories, package-manager scripts or node_modules. The host independently
+normalizes private source paths and uses native `no_bundle`; containers/Python
+builds are refused, so uploaded code is not executed during publication.
+
+A credential-free native dry run validates the prepared deployment and expected
+version. Native publication then runs as the unprivileged publisher with the
+root-read node credentials passed only to that trusted process. Child output,
+execution time, file/directory counts, configuration size, transfer size and
+decoded bytes are bounded; storage
+credentials are redacted from errors. Temporary staging is cleaned up after
+normal completion/failure. Following a process crash, an operator can inspect
+and remove abandoned stage directories; never delete durable R2 data.
+
+Keep client and host at version 0.2.0 or later. The older client published directly
+to object storage and is not compatible with minimal SSH deployment targets.
+Legacy bucket-root imports are protected from automatic SSH publication.

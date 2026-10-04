@@ -41,9 +41,11 @@ cella --host cella-deploy@HOST --identity /path/to/key --ssh-port 2222 deploymen
 ```
 
 `deploy` auto-provisions the Worker name, downloads/caches the exact host-pinned
-release, finds local esbuild, runs native `celld deploy` locally, then activates
-or reloads the node. Developer storage credentials come from standard `AWS_*`
-variables and are never sent through SSH. Initially supported: Linux x86_64,
+release, finds local esbuild, builds locally with native `celld deploy --dry-run`, and sends a bounded
+prepared package over restricted SSH. The host publishes with its own storage
+configuration and credentials, then activates or reloads the node. **Developers
+and CI need only SSH settings—no R2 credentials or bucket configuration.**
+Use client/host version 0.2.0 or later. Initially supported: Linux x86_64,
 Linux arm64 and macOS arm64; JavaScript/TypeScript with npm/pnpm/Yarn projects.
 
 ## Documentation

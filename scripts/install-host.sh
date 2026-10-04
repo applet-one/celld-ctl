@@ -7,10 +7,12 @@ REPO=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 command -v caddy >/dev/null
 command -v sshd >/dev/null
 getent passwd celld >/dev/null || useradd --system --home-dir /var/lib/celld --shell /usr/sbin/nologin celld
+getent passwd celld-publish >/dev/null || useradd --system --user-group --home-dir /var/empty/celld-publish --shell /usr/sbin/nologin celld-publish
 getent passwd cella-deploy >/dev/null || useradd --system --home-dir /var/empty/cella-deploy --shell /bin/sh cella-deploy
-install -d -o root -g root -m 755 /var/empty/cella-deploy /etc/ssh/cella-deploy
+install -d -o root -g root -m 755 /var/empty/cella-deploy /var/empty/celld-publish /etc/ssh/cella-deploy
 install -d -o root -g root -m 700 /etc/celld-ctl /etc/celld/cells /var/backups/celld-ctl
 install -d -o root -g root -m 755 /var/lib/celld /var/lib/celld-ctl /var/lib/celld-ctl/public /usr/local/lib/celld/releases
+install -d -o root -g celld-publish -m 710 /var/lib/celld-ctl/staging
 install -o root -g root -m 755 "$REPO/target/release/celld-ctl" /usr/local/bin/celld-ctl
 install -d -o root -g root -m 755 /usr/local/libexec
 install -o root -g root -m 755 "$REPO/scripts/celld-run" /usr/local/libexec/celld-run

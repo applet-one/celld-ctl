@@ -36,7 +36,7 @@ cella logs
 cella status
 ```
 
-`cella deploy` reads `wrangler.jsonc`, asks the host to provision its slug, runs local esbuild/native `celld deploy`, then asks the host to enable or reload the service. R2 deploy credentials remain on the developer machine or CI.
+`cella deploy` reads `wrangler.jsonc`, asks the host to provision its slug, builds locally with esbuild/native `celld deploy --dry-run`, then sends a bounded prepared package over restricted SSH. The host publishes using its own R2 configuration and credentials and enables or reloads the service. Developer machines and CI need only SSH settings; no bucket configuration or storage credentials.
 
 ## Initial scope
 
