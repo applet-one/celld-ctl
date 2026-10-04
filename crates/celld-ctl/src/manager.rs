@@ -5,7 +5,7 @@ use crate::{
     runtime::Runtime,
 };
 use anyhow::{bail, ensure, Context, Result};
-use celld_ctl_core::{Request, Target};
+use celld_ctl_core::{DeployTarget, PreparedBundle, Request, Target};
 use fs2::FileExt;
 use serde_json::{json, Value};
 use std::{
@@ -72,6 +72,7 @@ impl<R: Runtime> Manager<R> {
                 version_id,
                 source_revision,
             } => self.activate(&slug, Some(&version_id), source_revision.as_deref(), false),
+            Request::Deploy { .. } => bail!("deploy requires a framed prepared bundle"),
             Request::Status { slug } => self.status(&slug),
             Request::Logs { slug, lines } => {
                 let app = self.registry.get(&slug)?;
@@ -82,6 +83,71 @@ impl<R: Runtime> Manager<R> {
                 Ok(serde_json::to_value(self.registry.history(&slug)?)?)
             }
         }
+    }
+    /// The SSH boundary never exposes storage configuration or accepts storage paths.
+    pub fn transport_request(
+        &mut self,
+        request: Request,
+        bundle: Option<PreparedBundle>,
+    ) -> Result<Value> {
+        request.validate().map_err(anyhow::Error::msg)?;
+        if matches!(request, Request::Deploy { .. }) {
+            return self.deploy(
+                request,
+                bundle.context("deploy requires a prepared bundle")?,
+            );
+        }
+        ensure!(bundle.is_none(), "only deploy accepts a bundle");
+        match request {
+            Request::Provision { slug } => Ok(serde_json::to_value(DeployTarget::from(
+                &self.provision(&slug)?,
+            ))?),
+            Request::Target { slug } => Ok(serde_json::to_value(DeployTarget::from(
+                &self.registry.get(&slug)?.target,
+            ))?),
+            Request::Status { slug } => {
+                let mut status = self.status(&slug)?;
+                status["target"] =
+                    serde_json::to_value(DeployTarget::from(&self.registry.get(&slug)?.target))?;
+                Ok(status)
+            }
+            other => self.request(other),
+        }
+    }
+    pub fn deploy(&mut self, request: Request, bundle: PreparedBundle) -> Result<Value> {
+        request.validate().map_err(anyhow::Error::msg)?;
+        let Request::Deploy {
+            slug,
+            celld_version,
+            version_id,
+            source_revision,
+            ..
+        } = request
+        else {
+            bail!("expected deploy metadata");
+        };
+        let app = self.registry.get(&slug)?;
+        ensure!(!app.legacy,"SSH publish is disabled for the legacy bucket-root fleet; use an explicit root-operator workflow");
+        ensure!(
+            celld_version == app.target.celld_version,
+            "prepared bundle celld version does not match the target pin"
+        );
+        let bundle = bundle.normalize().map_err(anyhow::Error::msg)?;
+        self.pin(&app)?;
+        let native = self.runtime.deploy(&app, &bundle, &version_id)?;
+        let activation=self.activate(&slug,Some(&version_id),source_revision.as_deref(),false)
+            .map_err(|e|anyhow::anyhow!("native version {version_id} was published but activation failed: {e}; retry this exact deployment or ask the operator to enable/reload {slug}"))?;
+        let mut result = activation
+            .as_object()
+            .context("invalid activation result")?
+            .clone();
+        result.insert(
+            "source_revision".into(),
+            serde_json::to_value(source_revision)?,
+        );
+        result.insert("native_output".into(), native.native_output);
+        result.insert("native_stderr".into(), Value::String(native.native_stderr));
+        Ok(Value::Object(result))
     }
     fn check_slug(slug: &str) -> Result<()> {
         ensure!(celld_ctl_core::valid_slug(slug), "invalid slug");

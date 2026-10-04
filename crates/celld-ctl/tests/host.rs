@@ -27,10 +27,28 @@ struct Fake {
     fail_reload: bool,
     fail_native: bool,
     fail_pin: bool,
+    fail_publish: bool,
+    published: Option<celld_ctl_core::PreparedBundle>,
     blocked: HashSet<u16>,
     loaded: String,
 }
 impl Runtime for Fake {
+    fn deploy(
+        &mut self,
+        _: &App,
+        bundle: &celld_ctl_core::PreparedBundle,
+        expected: &str,
+    ) -> Result<celld_ctl::publish::NativePublish> {
+        self.calls.push("native-publish".into());
+        ensure!(!self.fail_publish, "native validation failed");
+        self.published = Some(bundle.clone());
+        self.deployed = Some(expected.into());
+        Ok(celld_ctl::publish::NativePublish {
+            native_output: json!({"version":expected,"dry_run":false}),
+            native_stderr: "native progress".into(),
+        })
+    }
+
     fn systemctl(&mut self, action: &str, unit: Option<&str>) -> Result<()> {
         self.calls.push(format!("{action}:{}", unit.unwrap_or("")));
         if let Some(unit) = unit {
@@ -685,4 +703,171 @@ fn failed_withdrawal_restores_the_previous_disabled_registry_flag() {
         .calls
         .iter()
         .any(|s| s == "stop:celld-cell@app.service"));
+}
+
+fn prepared() -> celld_ctl_core::PreparedBundle {
+    use base64::Engine;
+    celld_ctl_core::PreparedBundle {
+        config: json!({"name":"native-worker","main":"src/main.ts"}),
+        modules: vec![celld_ctl_core::UploadFile {
+            path: "index.js".into(),
+            content: base64::engine::general_purpose::STANDARD.encode(b"export default {};"),
+        }],
+        assets: vec![],
+    }
+}
+fn deploy_request(bundle: &celld_ctl_core::PreparedBundle) -> Request {
+    Request::Deploy {
+        slug: "app".into(),
+        celld_version: "0.6.1".into(),
+        version_id: "new-version".into(),
+        source_revision: Some("source-revision".into()),
+        bundle_size: serde_json::to_vec(bundle).unwrap().len(),
+    }
+}
+#[test]
+fn ssh_targets_hide_storage_and_publishing_verifies_before_activation() {
+    let f = Fixture::new();
+    let mut m = f.manager();
+    let target = m
+        .transport_request(Request::Provision { slug: "app".into() }, None)
+        .unwrap();
+    assert_eq!(target.as_object().unwrap().len(), 3);
+    assert!(target.get("bucket").is_none());
+    assert!(target.get("endpoint").is_none());
+    assert!(target.get("region").is_none());
+    let bundle = prepared();
+    let result = m
+        .transport_request(deploy_request(&bundle), Some(bundle))
+        .unwrap();
+    assert_eq!(result["version_id"], "new-version");
+    assert_eq!(result["source_revision"], "source-revision");
+    assert_eq!(result["native_stderr"], "native progress");
+    let published = m
+        .runtime
+        .calls
+        .iter()
+        .position(|s| s == "native-publish")
+        .unwrap();
+    let ready = m.runtime.calls.iter().position(|s| s == "ready").unwrap();
+    assert!(published < ready);
+    assert_eq!(
+        m.runtime.published.as_ref().unwrap().config["main"],
+        "modules/index.js"
+    );
+    assert_eq!(
+        m.runtime.published.as_ref().unwrap().config["no_bundle"],
+        true
+    );
+    assert_eq!(
+        m.registry.history("app").unwrap()[0]
+            .source_revision
+            .as_deref(),
+        Some("source-revision")
+    );
+}
+#[test]
+fn malformed_bundle_pin_mismatch_and_native_validation_failure_never_activate() {
+    let f = Fixture::new();
+    let mut m = f.manager();
+    m.provision("app").unwrap();
+    m.runtime.calls.clear();
+    let mut bad = prepared();
+    bad.modules[0].path = "../../root.js".into();
+    assert!(m.deploy(deploy_request(&bad), bad).is_err());
+    assert!(m.runtime.calls.is_empty());
+    let bundle = prepared();
+    let mut request = deploy_request(&bundle);
+    if let Request::Deploy { celld_version, .. } = &mut request {
+        *celld_version = "0.0.0".into();
+    }
+    assert!(m.deploy(request, bundle).is_err());
+    assert!(m.runtime.calls.is_empty());
+    m.runtime.fail_publish = true;
+    let bundle = prepared();
+    assert!(m.deploy(deploy_request(&bundle), bundle).is_err());
+    assert!(!m.runtime.calls.contains(&"pointer".into()));
+    assert!(!m.runtime.calls.contains(&"ready".into()));
+    assert!(m.registry.history("app").unwrap().is_empty());
+}
+#[test]
+fn postpublish_activation_error_returns_recoverable_version() {
+    let f = Fixture::new();
+    let mut m = f.manager();
+    m.provision("app").unwrap();
+    m.runtime.fail_ready = true;
+    let bundle = prepared();
+    let error = m
+        .deploy(deploy_request(&bundle), bundle)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("new-version"));
+    assert!(error.contains("was published but activation failed"));
+    assert!(error.contains("retry"));
+    assert!(!m.registry.get("app").unwrap().target.enabled);
+}
+#[test]
+fn ssh_publish_cannot_replace_the_legacy_bucket_root_fleet() {
+    let f = Fixture::new();
+    let mut m = f.manager();
+    m.runtime.deployed = Some("original".into());
+    m.import_counter("0.6.1", None, false).unwrap();
+    m.runtime.calls.clear();
+    let bundle = prepared();
+    let mut request = deploy_request(&bundle);
+    if let Request::Deploy { slug, .. } = &mut request {
+        *slug = "counter".into();
+    }
+    assert!(m
+        .deploy(request, bundle)
+        .unwrap_err()
+        .to_string()
+        .contains("legacy"));
+    assert!(m.runtime.calls.is_empty());
+}
+#[test]
+fn deploy_frames_require_exact_lengths_single_header_and_bounded_payload() {
+    use celld_ctl::transport::parse_input;
+    let bundle = prepared();
+    let body = serde_json::to_vec(&bundle).unwrap();
+    let header = serde_json::to_vec(&deploy_request(&bundle)).unwrap();
+    let mut frame = header.clone();
+    frame.push(b'\n');
+    frame.extend(&body);
+    let parsed = parse_input(&frame).unwrap();
+    assert!(parsed.bundle.is_some());
+    let mut extra = frame.clone();
+    extra.push(b' ');
+    assert!(parse_input(&extra).is_err());
+    frame.pop();
+    assert!(parse_input(&frame).is_err());
+    assert!(parse_input(&header).is_err());
+    assert!(parse_input(br#"{"op":"target","slug":"app"}"#)
+        .unwrap()
+        .bundle
+        .is_none());
+    let bad = json!({"op":"deploy","slug":"app","celld_version":"0.6.1","version_id":"x","bundle_size":celld_ctl_core::MAX_BUNDLE_BYTES+1});
+    assert!(parse_input(&serde_json::to_vec(&bad).unwrap()).is_err());
+    let mut bad = serde_json::to_value(deploy_request(&bundle)).unwrap();
+    bad["bucket"] = json!("s3://attacker");
+    assert!(parse_input(&serde_json::to_vec(&bad).unwrap()).is_err());
+}
+
+#[test]
+fn ssh_status_uses_minimal_target_but_operator_status_retains_registry_details() {
+    let f = Fixture::new();
+    let mut m = f.manager();
+    m.provision("app").unwrap();
+    assert_eq!(
+        m.status("app").unwrap()["target"]
+            .as_object()
+            .unwrap()
+            .len(),
+        6
+    );
+    let status = m
+        .transport_request(Request::Status { slug: "app".into() }, None)
+        .unwrap();
+    assert_eq!(status["target"].as_object().unwrap().len(), 3);
+    assert!(status["target"].get("bucket").is_none());
 }

@@ -123,12 +123,12 @@ fn run_transport(args: &[String]) -> Result<Value> {
         .transpose()?;
     transport::validate_original_command(original.as_deref())?;
     require_root()?;
-    let request = transport::parse_request(&transport::read_stdin()?)?;
+    let incoming = transport::read_stdin()?;
     let paths = Paths::production();
     let runtime = RealRuntime {
         paths: paths.clone(),
     };
-    Manager::open(paths, runtime)?.request(request)
+    Manager::open(paths, runtime)?.transport_request(incoming.request, incoming.bundle)
 }
 fn main() {
     // Private files and child-created SQLite journals are private from their first byte.
@@ -140,9 +140,10 @@ fn main() {
     let is_transport = args.first().map(String::as_str) == Some("transport");
     // A remotely inherited original command can never select an operator path.
     if is_transport || std::env::var_os("SSH_ORIGINAL_COMMAND").is_some() {
-        // Bound total process lifetime too; a killed process releases its advisory lock.
+        // Outer failsafe leaves room for the bounded input, lock, native publish,
+        // configured readiness and Caddy/systemd rollback phases to complete.
         unsafe {
-            libc::alarm(180);
+            libc::alarm(600);
         }
         let result = run_transport(&args);
         let ok = result.is_ok();

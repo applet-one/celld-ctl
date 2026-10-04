@@ -1,5 +1,6 @@
 pub mod config;
 pub mod manager;
+pub mod publish;
 pub mod registry;
 pub mod render;
 pub mod runtime;

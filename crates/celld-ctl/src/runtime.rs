@@ -26,6 +26,14 @@ pub trait Runtime {
     fn port_free(&mut self, port: u16) -> bool;
     fn verify_binary(&mut self, path: &Path, version: &str) -> Result<()>;
     fn observed_version(&mut self, app: &App) -> Result<Option<String>>;
+    fn deploy(
+        &mut self,
+        _app: &App,
+        _bundle: &celld_ctl_core::PreparedBundle,
+        _expected: &str,
+    ) -> Result<crate::publish::NativePublish> {
+        bail!("native publisher is not implemented by this runtime")
+    }
 }
 
 pub struct RealRuntime {
@@ -146,6 +154,14 @@ fn hmac(key: &[u8], msg: &[u8]) -> Vec<u8> {
     m.finalize().into_bytes().to_vec()
 }
 impl Runtime for RealRuntime {
+    fn deploy(
+        &mut self,
+        app: &App,
+        bundle: &celld_ctl_core::PreparedBundle,
+        expected: &str,
+    ) -> Result<crate::publish::NativePublish> {
+        crate::publish::deploy(&self.paths, app, bundle, expected)
+    }
     fn systemctl(&mut self, action: &str, unit: Option<&str>) -> Result<()> {
         ensure!(
             [

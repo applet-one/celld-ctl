@@ -6,6 +6,12 @@ pub const MAX_REQUEST_BYTES: usize = 16 * 1024;
 pub const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 pub const MAX_LOG_LINES: u32 = 1000;
 pub const MAX_HISTORY: usize = 100;
+pub const MAX_BUNDLE_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_DECODED_BYTES: usize = 24 * 1024 * 1024;
+pub const MAX_UPLOAD_FILES: usize = 4096;
+pub const MAX_CONFIG_BYTES: usize = 64 * 1024;
+pub mod bundle;
+pub use bundle::{valid_upload_path, PreparedBundle, UploadFile};
 
 pub fn valid_slug(s: &str) -> bool {
     !s.is_empty()
@@ -44,6 +50,24 @@ pub struct Target {
     pub enabled: bool,
 }
 
+/// SSH deployment metadata deliberately excludes all object-store configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DeployTarget {
+    pub slug: String,
+    pub celld_version: String,
+    pub enabled: bool,
+}
+impl From<&Target> for DeployTarget {
+    fn from(target: &Target) -> Self {
+        Self {
+            slug: target.slug.clone(),
+            celld_version: target.celld_version.clone(),
+            enabled: target.enabled,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
@@ -58,6 +82,14 @@ pub enum Request {
         version_id: String,
         #[serde(default)]
         source_revision: Option<String>,
+    },
+    Deploy {
+        slug: String,
+        celld_version: String,
+        version_id: String,
+        #[serde(default)]
+        source_revision: Option<String>,
+        bundle_size: usize,
     },
     Logs {
         slug: String,
@@ -80,6 +112,7 @@ impl Request {
             Self::Provision { slug }
             | Self::Target { slug }
             | Self::Activate { slug, .. }
+            | Self::Deploy { slug, .. }
             | Self::Logs { slug, .. }
             | Self::Status { slug }
             | Self::Deployments { slug } => slug,
@@ -90,6 +123,11 @@ impl Request {
             return Err("invalid slug: use 1-63 lowercase letters, digits or hyphens, starting and ending alphanumeric");
         }
         if let Self::Activate {
+            version_id,
+            source_revision,
+            ..
+        }
+        | Self::Deploy {
             version_id,
             source_revision,
             ..
@@ -108,6 +146,19 @@ impl Request {
                 return Err("invalid source revision");
             }
         }
+        if let Self::Deploy {
+            celld_version,
+            bundle_size,
+            ..
+        } = self
+        {
+            if !valid_version(celld_version) {
+                return Err("invalid pinned celld version");
+            }
+            if *bundle_size == 0 || *bundle_size > MAX_BUNDLE_BYTES {
+                return Err("bundle size must be 1..32 MiB");
+            }
+        }
         if let Self::Logs { lines, .. } = self {
             if *lines == 0 || *lines > MAX_LOG_LINES {
                 return Err("lines must be between 1 and 1000");
@@ -116,7 +167,10 @@ impl Request {
         Ok(())
     }
     pub fn mutates(&self) -> bool {
-        matches!(self, Self::Provision { .. } | Self::Activate { .. })
+        matches!(
+            self,
+            Self::Provision { .. } | Self::Activate { .. } | Self::Deploy { .. }
+        )
     }
 }
 
