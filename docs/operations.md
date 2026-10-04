@@ -197,3 +197,17 @@ capacity qualification supply 10, then 25, then 50 representative deployed app
 slugs and measure cgroup/host resources concurrently. A small two-app smoke test
 is not capacity qualification, and synthetic counter traffic is not necessarily
 representative of your workload.
+
+After enrolling a deploy key, use the real, non-mutating SSH policy probe:
+
+```sh
+python3 scripts/check-ssh-policy.py --host cella-deploy@HOST \
+  --identity /path/to/key --port 2222 --slug APP_SLUG
+```
+
+It first requires a successful read-only status operation, then checks rejected
+shell/extra commands, unsupported operations, injected paths/slugs, oversized
+requests and TCP forwarding. Do not confuse a failed connection with a passed
+policy check. Key revocation can be verified by retrying a **new** connection
+after revoking its label; existing sessions need separate termination if immediate
+revocation is required.

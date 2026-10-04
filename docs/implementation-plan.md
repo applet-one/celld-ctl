@@ -48,3 +48,20 @@ cella status
 ## Deferred
 
 Runtime secret management, Rust/Wasm build toolchains, and multi-host scheduling.
+
+## Delivery status
+
+The host registry/lifecycle/target/history/backup commands and separate `cella`
+client are implemented with hermetic tests. The installer provides pinned app
+units, bounded journal retention, labeled/revocable deploy keys and a dedicated
+loopback-only deployment SSH daemon. Native deployment, reload and durable-state
+restart behavior have been exercised against a real object store.
+
+Instance operators still need to enroll their own public deploy keys and provide
+private remote TCP connectivity; platform-managed VM-owner SSH is not a
+replacement for the restricted account. Full 10/25/50-app capacity qualification
+remains an operational task; the explicit load probe is provided but installation
+never provisions or stresses production fleets automatically. The optional
+starter command is not implemented; existing Wrangler projects need no replacement
+manifest or edits. Runtime app-secret management and additional Rust/Wasm toolchains
+remain deferred.
