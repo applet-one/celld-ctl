@@ -61,15 +61,51 @@ pub fn parse_input(bytes: &[u8]) -> Result<Incoming> {
         bundle: None,
     })
 }
+struct InputBudget {
+    limit: usize,
+    timeout: std::time::Duration,
+    saw_newline: bool,
+}
+impl InputBudget {
+    fn new() -> Self {
+        Self {
+            limit: MAX_REQUEST_BYTES,
+            timeout: std::time::Duration::from_secs(30),
+            saw_newline: false,
+        }
+    }
+    fn observe(&mut self, bytes: &[u8]) -> Result<()> {
+        if !self.saw_newline {
+            if let Some(newline) = bytes.iter().position(|b| *b == b'\n') {
+                self.saw_newline = true;
+                if newline <= MAX_REQUEST_BYTES {
+                    if let Ok(Request::Deploy { bundle_size, .. }) =
+                        parse_request(&bytes[..newline])
+                    {
+                        ensure!(bundle_size <= MAX_BUNDLE_BYTES, "bundle exceeds size limit");
+                        self.limit = newline + 1 + bundle_size;
+                        // Extend only a validated deploy header, measured from the
+                        // original request start; this is not a sliding idle timeout.
+                        self.timeout = std::time::Duration::from_secs(180);
+                    }
+                }
+            }
+        }
+        ensure!(
+            bytes.len() <= self.limit,
+            "request or deploy body exceeds its size limit"
+        );
+        Ok(())
+    }
+}
 /// Read and validate the bounded upload before acquiring the host mutation lock.
 /// poll+raw read avoids stdio buffering ambiguity and clients holding root forever.
 pub fn read_stdin() -> Result<Incoming> {
     let mut bytes = Vec::new();
     let start = std::time::Instant::now();
-    let mut limit = MAX_REQUEST_BYTES;
-    let mut saw_newline = false;
+    let mut budget = InputBudget::new();
     loop {
-        let remaining = std::time::Duration::from_secs(30).saturating_sub(start.elapsed());
+        let remaining = budget.timeout.saturating_sub(start.elapsed());
         ensure!(!remaining.is_zero(), "transport input timeout");
         let mut fd = libc::pollfd {
             fd: 0,
@@ -92,23 +128,7 @@ pub fn read_stdin() -> Result<Incoming> {
             return parse_input(&bytes);
         }
         bytes.extend_from_slice(&buf[..n]);
-        if !saw_newline {
-            if let Some(newline) = bytes.iter().position(|b| *b == b'\n') {
-                saw_newline = true;
-                if newline <= MAX_REQUEST_BYTES {
-                    if let Ok(Request::Deploy { bundle_size, .. }) =
-                        parse_request(&bytes[..newline])
-                    {
-                        ensure!(bundle_size <= MAX_BUNDLE_BYTES, "bundle exceeds size limit");
-                        limit = newline + 1 + bundle_size;
-                    }
-                }
-            }
-        }
-        ensure!(
-            bytes.len() <= limit,
-            "request or deploy body exceeds its size limit"
-        );
+        budget.observe(&bytes)?;
     }
 }
 pub fn write_response(response: Response) -> Result<()> {
@@ -121,4 +141,35 @@ pub fn write_response(response: Response) -> Result<()> {
     out.write_all(&bytes)?;
     out.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn only_validated_deploy_headers_extend_the_fixed_input_deadline() {
+        let mut budget = InputBudget::new();
+        budget.observe(br#"{"op":"deploy""#).unwrap();
+        assert_eq!(budget.timeout.as_secs(), 30);
+        let mut header=serde_json::to_vec(&json!({"op":"deploy","slug":"app","celld_version":"0.6.1","version_id":"abc","bundle_size":100})).unwrap();
+        header.push(b'\n');
+        budget.observe(&header).unwrap();
+        assert_eq!(budget.timeout.as_secs(), 180);
+        assert_eq!(budget.limit, header.len() + 100);
+        assert_eq!(
+            budget
+                .timeout
+                .saturating_sub(std::time::Duration::from_secs(54))
+                .as_secs(),
+            126
+        );
+        header.extend([b' '; 101]);
+        assert!(budget.observe(&header).is_err());
+        for raw in [br#"{"op":"status","slug":"app"}"#.as_slice(),br#"{"op":"deploy","slug":"app","celld_version":"latest","version_id":"abc","bundle_size":100}"#] {
+            let mut budget=InputBudget::new();let mut bytes=raw.to_vec();bytes.push(b'\n');budget.observe(&bytes).unwrap();
+            assert_eq!(budget.timeout.as_secs(),30);assert_eq!(budget.limit,MAX_REQUEST_BYTES);
+            assert!(budget.timeout.saturating_sub(std::time::Duration::from_secs(31)).is_zero());
+        }
+    }
 }
