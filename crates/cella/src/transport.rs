@@ -1,12 +1,12 @@
 use anyhow::{bail, Context, Result};
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-pub const MAX_RESPONSE_BYTES: u64 = 1024 * 1024;
-pub const MAX_REQUEST_BYTES: usize = 16 * 1024;
+pub use celld_ctl_core::{DeployTarget as Target, Request};
+pub const MAX_RESPONSE_BYTES: u64 = celld_ctl_core::MAX_RESPONSE_BYTES as u64;
+pub const MAX_REQUEST_BYTES: usize = celld_ctl_core::MAX_REQUEST_BYTES;
 
 pub fn validate_source_revision(revision: &str) -> Result<()> {
     if revision.is_empty()
@@ -18,42 +18,6 @@ pub fn validate_source_revision(revision: &str) -> Result<()> {
         bail!("source revision must be 1–200 ASCII letters, digits, '.', '_', '/', or '-'");
     }
     Ok(())
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Target {
-    pub slug: String,
-    pub bucket: String,
-    pub endpoint: String,
-    pub region: String,
-    pub celld_version: String,
-    pub enabled: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "op", rename_all = "snake_case")]
-pub enum Request<'a> {
-    Provision {
-        slug: &'a str,
-    },
-    Target {
-        slug: &'a str,
-    },
-    Activate {
-        slug: &'a str,
-        version_id: &'a str,
-        source_revision: Option<&'a str>,
-    },
-    Logs {
-        slug: &'a str,
-        lines: u16,
-    },
-    Status {
-        slug: &'a str,
-    },
-    Deployments {
-        slug: &'a str,
-    },
 }
 
 pub struct Ssh {
@@ -112,7 +76,23 @@ impl Ssh {
         Ok(cmd)
     }
 
-    pub fn request(&self, request: &Request<'_>) -> Result<Value> {
+    pub fn request(&self, request: &Request) -> Result<Value> {
+        if matches!(request, Request::Deploy { .. }) {
+            bail!("deploy requires a prepared payload");
+        }
+        self.exchange(request, &[])
+    }
+
+    pub fn deploy(&self, request: &Request, payload: &[u8]) -> Result<Value> {
+        match request {
+            Request::Deploy { bundle_size, .. } if *bundle_size == payload.len() => {}
+            _ => bail!("deploy metadata must describe the exact prepared payload length"),
+        }
+        self.exchange(request, payload)
+    }
+
+    fn exchange(&self, request: &Request, payload: &[u8]) -> Result<Value> {
+        request.validate().map_err(anyhow::Error::msg)?;
         let mut bytes = serde_json::to_vec(request)?;
         bytes.push(b'\n');
         if bytes.len() > MAX_REQUEST_BYTES {
@@ -125,49 +105,49 @@ impl Ssh {
             .stderr(Stdio::inherit())
             .spawn()
             .context("start restricted SSH transport")?;
-        let write = child
-            .stdin
-            .take()
-            .context("SSH stdin unavailable")?
-            .write_all(&bytes);
-        let mut stdout = Vec::new();
-        let read = child
-            .stdout
-            .take()
-            .context("SSH stdout unavailable")?
-            .take(MAX_RESPONSE_BYTES + 1)
-            .read_to_end(&mut stdout);
-        if read.is_err() || stdout.len() as u64 > MAX_RESPONSE_BYTES {
-            let _ = child.kill();
-            let _ = child.wait();
-            read.context("read SSH transport response")?;
-            bail!("host transport response exceeds {MAX_RESPONSE_BYTES} bytes");
-        }
-        let status = child.wait().context("wait for SSH transport")?;
-        // A server can reject and close stdin early; preserve its structured error.
-        if !status.success() && stdout.is_empty() {
-            bail!("SSH transport exited with {status}");
-        }
-        let result = decode_response(&stdout)?;
-        write.context("write transport request")?;
-        if !status.success() {
-            bail!("SSH transport exited with {status}");
-        }
-        Ok(result)
+        let mut stdin = child.stdin.take().context("SSH stdin unavailable")?;
+        let stdout = child.stdout.take().context("SSH stdout unavailable")?;
+        // Read concurrently: a host can reject the header before consuming a large
+        // payload, and its stdout must not block while our stdin pipe is full.
+        std::thread::scope(|scope| -> Result<Value> {
+            let writer = scope.spawn(move || -> std::io::Result<()> {
+                stdin.write_all(&bytes)?;
+                stdin.write_all(payload)
+                // stdin is dropped here, marking exact payload EOF.
+            });
+            let mut response = Vec::new();
+            let read = stdout
+                .take(MAX_RESPONSE_BYTES + 1)
+                .read_to_end(&mut response);
+            if read.is_err() || response.len() as u64 > MAX_RESPONSE_BYTES {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = writer.join();
+                read.context("read SSH transport response")?;
+                bail!("host transport response exceeds {MAX_RESPONSE_BYTES} bytes");
+            }
+            let status = child.wait().context("wait for SSH transport")?;
+            let write = writer
+                .join()
+                .map_err(|_| anyhow::anyhow!("SSH payload writer panicked"))?;
+            if !status.success() && response.is_empty() {
+                bail!("SSH transport exited with {status}");
+            }
+            // Preserve a host rejection even if it closed stdin before our write.
+            let result = decode_response(&response)?;
+            write.context("write transport request/payload")?;
+            if !status.success() {
+                bail!("SSH transport exited with {status}");
+            }
+            Ok(result)
+        })
     }
 
-    pub fn target(&self, request: &Request<'_>, slug: &str) -> Result<Target> {
+    pub fn target(&self, request: &Request, slug: &str) -> Result<Target> {
         let target: Target =
             serde_json::from_value(self.request(request)?).context("invalid target response")?;
         if target.slug != slug {
             bail!("host returned target for another slug");
-        }
-        if !target.bucket.starts_with("s3://")
-            || target.bucket.len() <= 5
-            || !target.endpoint.starts_with("https://")
-            || target.region.is_empty()
-        {
-            bail!("host returned invalid S3 target metadata (HTTPS endpoint required)");
         }
         Ok(target)
     }
@@ -237,15 +217,17 @@ mod tests {
         }
         assert_eq!(args.last().unwrap(), "celld-ctl-transport");
         assert!(!args.iter().any(|arg| arg.contains("AWS_")));
-        let json = serde_json::to_value(Request::Activate {
-            slug: "app",
-            version_id: "abc",
+        let json = serde_json::to_value(Request::Deploy {
+            slug: "app".into(),
+            celld_version: "1.2.3".into(),
+            version_id: "abc".into(),
             source_revision: None,
+            bundle_size: 100,
         })
         .unwrap();
         assert_eq!(
             json,
-            serde_json::json!({"op":"activate","slug":"app","version_id":"abc","source_revision":null})
+            serde_json::json!({"op":"deploy","slug":"app","celld_version":"1.2.3","version_id":"abc","source_revision":null,"bundle_size":100})
         );
     }
     #[test]

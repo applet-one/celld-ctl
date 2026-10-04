@@ -1,6 +1,6 @@
 [package]
 name = "cella"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 description = "Local celld development and restricted SSH deployment client"
@@ -13,3 +13,5 @@ semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
+base64 = "0.22"
+celld-ctl-core = { path = "../core" }

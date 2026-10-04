@@ -44,10 +44,22 @@ pub fn slug(project: &Path, override_slug: Option<&str>) -> Result<String> {
     )
 }
 
+pub fn parse_jsonc(source: &str) -> Result<Value> {
+    serde_json::from_str(&strip_jsonc(source)?)
+        .context("read Wrangler JSONC (native celld validates Worker configuration)")
+}
+
+pub fn read_project(project: &Path) -> Result<(PathBuf, Value)> {
+    let path = config_path(project)?;
+    if std::fs::metadata(&path)?.len() > 1024 * 1024 {
+        bail!("Wrangler configuration exceeds the 1 MiB packaging limit");
+    }
+    let config = parse_jsonc(&std::fs::read_to_string(&path)?)?;
+    Ok((path, config))
+}
+
 pub fn name_from_jsonc(source: &str) -> Result<String> {
-    let config: Value = serde_json::from_str(&strip_jsonc(source)?).context(
-        "read Wrangler JSONC for Worker name (native celld validates Worker configuration)",
-    )?;
+    let config = parse_jsonc(source)?;
     let name = config.get("name").and_then(Value::as_str).context(
         "Wrangler name must be a string; use --slug to override hosted routing identity",
     )?;

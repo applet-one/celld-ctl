@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use cella::{
-    config, release, toolchain,
+    bundle, config, release, toolchain,
     transport::{Request, Ssh},
 };
 use clap::{Parser, Subcommand};
@@ -43,7 +43,7 @@ enum Action {
         #[arg(last = true)]
         native_args: Vec<String>,
     },
-    /// Provision, publish locally with native celld, then activate the target.
+    /// Build locally without storage credentials; upload over SSH for host publication.
     Deploy {
         /// Source label; defaults to Git HEAD, suffixed -dirty for local changes.
         #[arg(long)]
@@ -139,7 +139,7 @@ fn run(cli: Cli) -> Result<i32> {
                 None => {
                     let slug = cli.slug()?;
                     cli.ssh().context("dev needs --celld-version/CELLA_CELLD_VERSION, or an SSH target to obtain its exact pin")?
-                        .target(&Request::Target { slug: &slug }, &slug)?.celld_version
+                        .target(&Request::Target { slug: slug.clone() }, &slug)?.celld_version
                 }
             };
             let binary = release::ensure(&version, &release::cache_root()?)?;
@@ -165,44 +165,78 @@ fn run(cli: Cli) -> Result<i32> {
             }
             let slug = cli.slug()?;
             let ssh = cli.ssh()?;
-            let target = ssh.target(&Request::Provision { slug: &slug }, &slug)?;
+            let target = ssh.target(&Request::Provision { slug: slug.clone() }, &slug)?;
             let binary = release::ensure(&target.celld_version, &release::cache_root()?)?;
-            let root = project_root(&cli.project)?;
-            let revision = explicit_revision.clone().or_else(|| source_revision(&root));
+            let (config_path, original_config) = config::read_project(&cli.project)?;
+            bundle::check_scope(&original_config)?;
+            let root = config_path
+                .parent()
+                .context("project config has no directory")?;
+            let revision = explicit_revision.clone().or_else(|| source_revision(root));
             if revision.is_none() {
                 eprintln!("No Git revision available; recording source_revision=null (use --source-revision in CI)");
             }
+            let capture = tempfile::tempdir().context("create bounded native build capture")?;
             let mut command = Command::new(binary);
             command
                 .arg("deploy")
-                .arg(cli.project.canonicalize()?)
+                .arg(&config_path)
                 .arg("--json")
+                .arg("--dry-run")
                 .arg("--bucket")
-                .arg(&target.bucket)
-                .arg("--endpoint")
-                .arg(&target.endpoint)
-                .arg("--region")
-                .arg(&target.region)
-                .current_dir(&root)
+                .arg("s3://cella-build")
+                .current_dir(root)
                 .stdin(Stdio::null())
                 .stderr(Stdio::inherit())
                 .stdout(Stdio::piped());
-            // Standard AWS credentials remain solely in this local child's environment.
-            let _tools = toolchain::configure(&mut command, &root)?;
-            let output = command.output().context("run native celld deploy")?;
-            std::io::stdout().write_all(&output.stdout)?;
-            std::io::stdout().flush()?;
+            let _tools = toolchain::configure(&mut command, root)?;
+            bundle::configure_capture(&mut command, capture.path())?;
+            bundle::clear_storage_environment(&mut command);
+            // Native build runs before bucket-client initialization on --dry-run.
+            // No local R2 credentials, profile, endpoint or real bucket is needed.
+            let output = command.output().context("run native celld dry-run build")?;
             if !output.status.success() {
+                std::io::stderr().write_all(&output.stdout)?;
                 return Ok(output.status.code().unwrap_or(1));
             }
-            let deployment: NativeDeployment = serde_json::from_slice(&output.stdout).context(
-                "native publish returned invalid deployment JSON; host was not activated",
-            )?;
-            if deployment.dry_run || deployment.version.is_empty() {
-                bail!("native deploy did not return a published version; host was not activated");
+            let deployment: NativeDeployment = serde_json::from_slice(&output.stdout)
+                .context("native dry-run returned invalid deployment JSON; no upload was sent")?;
+            if !deployment.dry_run || !celld_ctl_core::valid_deployment_id(&deployment.version) {
+                bail!("native build did not return a dry-run version; no upload was sent");
             }
-            ssh.request(&Request::Activate { slug: &slug, version_id: &deployment.version, source_revision: revision.as_deref() })
-                .with_context(|| format!("version {} was published, but host activation failed; check cella status/logs before retrying (the R2 pointer may already be adopted)", deployment.version))?;
+            let payload = bundle::prepare(original_config, root, capture.path())?;
+            let pin = release::version_tag(&target.celld_version)?;
+            let result = ssh
+                .deploy(
+                    &Request::Deploy {
+                        slug: slug.clone(),
+                        celld_version: pin[1..].to_owned(),
+                        version_id: deployment.version.clone(),
+                        source_revision: revision.clone(),
+                        bundle_size: payload.len(),
+                    },
+                    &payload,
+                )
+                .context(
+                    "host publication/activation failed; inspect status/logs before retrying",
+                )?;
+            let native_output = result
+                .get("native_output")
+                .context("host publish response has no native_output")?;
+            let native_stderr = result
+                .get("native_stderr")
+                .and_then(|v| v.as_str())
+                .context("host publish response has no native_stderr")?;
+            std::io::stderr().write_all(native_stderr.as_bytes())?;
+            if result.get("version_id").and_then(|v| v.as_str())
+                != Some(deployment.version.as_str())
+                || native_output.get("version").and_then(|v| v.as_str())
+                    != Some(deployment.version.as_str())
+                || native_output.get("dry_run").and_then(|v| v.as_bool()) != Some(false)
+            {
+                bail!("host returned an unexpected publication version or dry-run result");
+            }
+            println!("{}", serde_json::to_string(native_output)?);
             eprintln!(
                 "Activated {slug}: {} (source {})",
                 deployment.version,
@@ -213,9 +247,12 @@ fn run(cli: Cli) -> Result<i32> {
         Action::Status | Action::Logs { .. } | Action::Deployments { .. } => {
             let slug = cli.slug()?;
             let request = match cli.command {
-                Action::Status => Request::Status { slug: &slug },
-                Action::Logs { lines } => Request::Logs { slug: &slug, lines },
-                Action::Deployments { .. } => Request::Deployments { slug: &slug },
+                Action::Status => Request::Status { slug: slug.clone() },
+                Action::Logs { lines } => Request::Logs {
+                    slug: slug.clone(),
+                    lines: lines.into(),
+                },
+                Action::Deployments { .. } => Request::Deployments { slug: slug.clone() },
                 _ => unreachable!(),
             };
             let value = cli.ssh()?.request(&request)?;
@@ -234,7 +271,12 @@ fn run(cli: Cli) -> Result<i32> {
 }
 
 fn main() {
-    match run(Cli::parse()) {
+    let result = if std::env::var_os(bundle::CAPTURE_ENV).is_some() {
+        bundle::capture_esbuild()
+    } else {
+        run(Cli::parse())
+    };
+    match result {
         Ok(code) => std::process::exit(code),
         Err(error) => {
             eprintln!("cella: {error:#}");
