@@ -45,13 +45,17 @@ def main():
     if not args.allow_mutations:
         parser.error('Use disposable fleets and explicitly pass --allow-mutations')
 
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
     def request(index):
         # Each slot exercises a stable named DO in the reference counter fixture.
         # Other representative apps may ignore the query and exercise their own path.
         endpoint = args.base_url.rstrip('/') + '/' + slugs[index % len(slugs)] + '/?name=capacity-' + str(index % args.concurrency)
         start = time.monotonic()
         try:
-            with urllib.request.urlopen(endpoint, timeout=args.timeout) as response:
+            with urllib.request.build_opener(NoRedirect()).open(endpoint, timeout=args.timeout) as response:
                 response.read(1024 * 1024)
                 status = str(response.status)
         except urllib.error.HTTPError as error:

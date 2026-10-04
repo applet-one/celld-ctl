@@ -47,6 +47,14 @@ class KeyTests(unittest.TestCase):
             self.run_cli('add', 'ci-two', str(self.key) + '.pub', '--kind', 'ci')
         self.assertEqual(len(keys.AUTHORIZED.read_text().splitlines()), 1)
 
+    def test_stale_sidecar_cannot_restore_revoked_key(self):
+        self.run_cli('add', 'old-ci', str(self.key) + '.pub', '--kind', 'ci')
+        (self.root / 'deploy-keys.json').write_text('{"old-ci": "stale"}')
+        self.run_cli('revoke', 'old-ci')
+        self.run_cli('add', 'new-owner', str(self.key) + '.pub', '--kind', 'owner')
+        self.assertNotIn('old-ci', keys.AUTHORIZED.read_text())
+        self.assertIn('new-owner', keys.AUTHORIZED.read_text())
+
     def test_invalid_label_and_key_options_rejected(self):
         with self.assertRaises(SystemExit):
             self.run_cli('add', '../bad', str(self.key) + '.pub', '--kind', 'ci')
