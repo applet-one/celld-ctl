@@ -1,0 +1,16 @@
+# Initial empty instance. celld-ctl replaces this with registry-generated routes.
+{
+    admin 127.0.0.1:2019
+    auto_https off
+}
+:8000 {
+    @index path /
+    handle @index {
+        root * /var/lib/celld-ctl/public
+        rewrite * /index.html
+        file_server
+    }
+    handle {
+        respond "Not found" 404
+    }
+}

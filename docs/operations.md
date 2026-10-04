@@ -38,6 +38,20 @@ Celld and internal/operator listeners bind to loopback. Only Caddy binds to
 headers are trusted **only** because this host is behind that trusted proxy.
 Do not expose this configuration as a direct public HTTP server.
 
+On a **new** host with no existing port-8000 workload, initialize Caddy explicitly:
+
+```sh
+sudo install -o root -g root -m 644 examples/caddy/Caddyfile.initial /etc/caddy/Caddyfile
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl enable --now caddy
+sudo systemctl reload caddy
+```
+
+Do not overwrite an existing application's proxy configuration blindly. For a
+legacy counter, complete its migration first and let `import-counter --enabled`
+render the route. Route publication needs Caddy's private admin listener running
+at `127.0.0.1:2019`; it is not an external management endpoint.
+
 ## Application lifecycle
 
 ```sh
@@ -114,8 +128,9 @@ revision. Roll back by checking out the chosen prior Git revision and running
 `cella deploy`; this uses the same pinned native parser and deployment engine.
 This does not revert Durable Object data/schema migrations.
 
-Back up the registry and root-only configuration with the operator backup
-command and store the result securely off-host. Registry/config backups contain
+Back up the registry and root-only configuration with `sudo celld-ctl backup`
+(the destination is under `/var/lib/celld-ctl/backups`) and store the result securely off-host. Only snapshots with a `COMPLETE` marker
+are complete; configuration, app environments and units have separate subdirectories. Registry/config backups contain
 node credentials; they are not public artifacts. Object-store durability does
 not replace registry, configuration, key inventory or release-binary backups.
 Restoration should be performed with services stopped and ownership/modes

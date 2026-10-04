@@ -26,6 +26,7 @@ chmod 644 /etc/ssh/cella-deploy/authorized_keys
 # Per-app journal namespaces bound verbose node logs without changing host journal policy.
 install -d -o root -g root -m 755 /etc/systemd/journald@celld.conf.d
 install -o root -g root -m 644 "$REPO/examples/systemd/journal-limits.conf" /etc/systemd/journald@celld.conf.d/limits.conf
+[ -e /var/lib/celld-ctl/public/index.html ] || install -o root -g root -m 644 "$REPO/examples/caddy/index.html" /var/lib/celld-ctl/public/index.html
 sshd -t
 systemctl daemon-reload
 systemctl reload ssh
