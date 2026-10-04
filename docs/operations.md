@@ -126,3 +126,18 @@ runs against a production bucket. Exercise 10, then 25, then 50 representative
 apps while measuring cgroup memory, request latency and CPU. Increase capacity
 only after inspection; add a second host before sustained memory/CPU saturation.
 Rust/Wasm developer toolchains and runtime app-secret management remain deferred.
+
+Use `scripts/load-test.py` against already deployed **disposable** apps:
+
+```sh
+python3 scripts/load-test.py --base-url http://127.0.0.1:8000 \
+  --slugs test-1,test-2 --requests 1000 --concurrency 4 --dry-run
+# Remove --dry-run and add --allow-mutations after checking the fleet list.
+```
+
+It reports status counts, throughput and latency percentiles, and returns failure
+for any non-2xx result. It never provisions fleets or passes credentials. For
+capacity qualification supply 10, then 25, then 50 representative deployed app
+slugs and measure cgroup/host resources concurrently. A small two-app smoke test
+is not capacity qualification, and synthetic counter traffic is not necessarily
+representative of your workload.

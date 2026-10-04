@@ -30,7 +30,7 @@ SSH transport, not the operator command surface or an arbitrary shell.
 ## Developer
 
 ```sh
-cella --celld-version VERSION dev
+cella dev --celld-version VERSION
 cella --host cella-deploy@HOST --identity /path/to/key deploy
 cella --host cella-deploy@HOST --identity /path/to/key status
 cella --host cella-deploy@HOST --identity /path/to/key deployments list
