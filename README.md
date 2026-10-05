@@ -6,43 +6,45 @@ Apps keep their `wrangler.jsonc`; native celld parses and builds them. Each app
 gets its own storage prefix, pinned celld release, loopback service and `/SLUG/`
 route. Fresh x86_64 installs use local RustFS storage by default.
 
-## Host (VM owner)
+## Host
 
 ```sh
-git clone https://github.com/applet-one/celld-ctl.git
-cd celld-ctl
+git clone https://github.com/applet-one/celld-ctl.git; cd celld-ctl
 cargo build --release --locked -p celld-ctl
 sudo scripts/install-host.sh
 ```
 
-Use your **existing exe.dev owner SSH login**; the installer does not set up a
-second SSH server, relay, tailnet or deployment key. See [host setup](docs/setup-host.md)
-for prerequisites, storage options and [existing-host cleanup](docs/operations.md#existing-host-migration-from-dedicated-deployment-ssh).
+See [host setup](docs/setup-host.md) for prerequisites and storage options.
 
-## Developer machine (VM owner only)
+## Developer machine
 
-In a checkout of this repository on your dev machine, use an existing registered
-owner key or create a new one (do not overwrite an existing file). For a new key:
+Use a key registered to your exe.dev owner account. Skip key generation and
+registration if you already have one.
 
 ```sh
+git clone https://github.com/applet-one/celld-ctl.git; cd celld-ctl
 cargo install --locked --path crates/cella --force
-ssh-keygen -t ed25519 -f ~/.ssh/cella-owner  # skip if you already have a registered key
-cat ~/.ssh/cella-owner.pub | ssh exe.dev ssh-key add
-ssh-add ~/.ssh/cella-owner  # if the key has a passphrase
+
+mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+ssh-keygen -t ed25519 -f "$HOME/.ssh/cella-owner"
 export CELLA_HOST=YOUR_VM.exe.xyz
 export CELLA_SSH_KEY="$HOME/.ssh/cella-owner"
+
+cat "${CELLA_SSH_KEY}.pub" | ssh exe.dev ssh-key add
+ssh-add "$CELLA_SSH_KEY"  # if the key has a passphrase
+ssh -i "$CELLA_SSH_KEY" -o IdentitiesOnly=yes "$CELLA_HOST" true
+
+cd /path/to/your/wrangler-project
 cella deploy
 cella status
 cella logs --lines 50
 ```
 
-If the direct hostname does not work, use `vm+YOUR_VM@vm.exe.xyz` instead.
-For an existing key, substitute its path and skip generation/registration.
-Verify the VM host-key fingerprint before adding it to `known_hosts`; see
-[dev-machine setup](docs/setup-cella.md) for key generation, exact commands
-and troubleshooting. Never put keys or host storage credentials in this repo or
-Wrangler. There is no independently scoped CI/developer access in this owner-only
-workflow.
+Register the key through `ssh exe.dev`, **not** `ssh "$CELLA_HOST"`; registration
+uses an existing exe.dev login. Skip registration if that key is already
+registered. Compare the VM host-key fingerprint with a trusted value before
+accepting the SSH connection. If the direct hostname fails, use
+`vm+YOUR_VM@vm.exe.xyz`. See [dev-machine setup](docs/setup-cella.md).
 
 ## Documentation
 
