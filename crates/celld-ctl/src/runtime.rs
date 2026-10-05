@@ -360,7 +360,9 @@ impl Runtime for RealRuntime {
         Ok(version.map(str::to_owned))
     }
     fn port_free(&mut self, port: u16) -> bool {
-        std::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))).is_ok()
+        // Public listeners use every interface; a service bound only to the
+        // VM address would not conflict with a loopback-only probe.
+        std::net::TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port))).is_ok()
     }
 }
 

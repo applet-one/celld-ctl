@@ -1,3 +1,4 @@
+use crate::registry::PUBLIC_PORT_OFFSET;
 use anyhow::{bail, ensure, Context, Result};
 use celld_ctl_core::valid_version;
 use serde::{Deserialize, Serialize};
@@ -90,10 +91,25 @@ impl Config {
             "port ranges overlap"
         );
         ensure!(
+            self.port_start >= 3000 && self.port_end <= 8999,
+            "app ports must be 3000-8999 so their dedicated public ports are 4000-9999"
+        );
+        let public_start = self.port_start + PUBLIC_PORT_OFFSET;
+        let public_end = self.port_end + PUBLIC_PORT_OFFSET;
+        ensure!(
+            self.port_end < public_start || public_end < self.port_start,
+            "app and dedicated public port ranges overlap"
+        );
+        ensure!(
+            self.internal_port_end < public_start || public_end < self.internal_port_start,
+            "internal and dedicated public port ranges overlap"
+        );
+        ensure!(
             [8000, 2019]
                 .iter()
                 .all(|port| !(self.port_start..=self.port_end).contains(port)
-                    && !(self.internal_port_start..=self.internal_port_end).contains(port)),
+                    && !(self.internal_port_start..=self.internal_port_end).contains(port)
+                    && !(public_start..=public_end).contains(port)),
             "ports 8000 and 2019 belong to Caddy"
         );
         ensure!(

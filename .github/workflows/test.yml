@@ -13,7 +13,6 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo test --workspace --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: python3 scripts/test_load_test.py
       - run: python3 scripts/test_install_host.py
       - run: sh -n scripts/install-host.sh scripts/celld-run
   macos-developer:

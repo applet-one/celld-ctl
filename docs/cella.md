@@ -1,190 +1,129 @@
-# cella: local development and owner SSH deployment
+# cella: owner SSH deployment
 
-First complete **[A. Host setup](setup-host.md)**, then follow
-**[B. Configure cella on your dev machine](setup-cella.md)**. B includes generating
-an exe.dev-registered owner key and verified VM `known_hosts` setup. This
-page is the detailed client/protocol reference, not the onboarding checklist.
+First [install the host](setup-host.md). `cella` is the owner's client; it
+uses the existing exe.dev VM-owner SSH gateway, not a separate deployment
+login, relay or port 2222. Keep your `wrangler.jsonc`/`wrangler.json`.
+Host object-store bucket settings and credentials stay on the host; application
+R2 bindings in Wrangler are separate. Client and host must be 0.2.0 or later:
+the old 0.1 client published directly to object storage.
 
-`cella` is the developer client, separate from the host/operator `celld-ctl`.
-Keep your existing `wrangler.jsonc` (or `wrangler.json`). **Deployment requires
-only the existing exe.dev owner SSH connection: no local host object-store credentials, bucket name,
-endpoint, or region.** Both client and host must use version 0.2.0 or later;
-the original 0.1 client used direct-to-object-store publication.
-
-This storage contract does not remove application-level R2 bindings from
-Wrangler: those bindings are distinct from the host's object-store backend.
-
-## Install and prerequisites
+## Install
 
 ```sh
-cargo install --locked --path crates/cella
+cargo install --locked --path crates/cella --force
 ```
 
-Supported developer platforms: Linux x86_64, Linux arm64, macOS arm64. Install
-Node.js and your project's npm/pnpm/Yarn dependencies, including esbuild when
-bundling is required. `cella` does not run package installs. `curl` is required
-for exact native release downloads, and OpenSSH for remote operations.
+Supported developer platforms: Linux x86_64/arm64 and macOS arm64. Install
+OpenSSH, `curl` (for exact native downloads), Node.js and your project's
+npm/pnpm/Yarn dependencies including esbuild when bundling requires it.
+`cella` does not run package installs.
 
-## Configure owner SSH once
+## Owner SSH setup
 
-Follow [B2–B4](setup-cella.md#b2-register-the-owners-public-key-with-exedev)
-for key registration, the working exe.dev VM destination and VM host-key
-fingerprint verification. On your dev machine:
+Reuse an exe.dev-registered owner SSH key if available. Otherwise, **on your
+own machine**, choose a new filename if this one exists:
 
 ```sh
-export CELLA_HOST=YOUR_VM.exe.xyz
-# If needed: export CELLA_HOST=vm+YOUR_VM@vm.exe.xyz
+mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+ssh-keygen -t ed25519 -f "$HOME/.ssh/cella-owner" -C 'exe.dev VM owner'
+chmod 600 "$HOME/.ssh/cella-owner"
+ssh-keygen -lf "$HOME/.ssh/cella-owner.pub"
+cat "$HOME/.ssh/cella-owner.pub" | ssh exe.dev ssh-key add
+```
+
+The [exe.dev key command](https://exe.dev/docs/cli-ssh-key.md) requires an
+already-authenticated account for registration; use your account's registration
+flow if that fails. Only submit the `.pub` file, never the private key. Prefer
+a passphrase and `ssh-add "$HOME/.ssh/cella-owner"` on the **local** agent
+before deploying. Batch SSH cannot prompt for it; alternatively, protect an
+empty-passphrase key carefully. Never share an owner key with CI or untrusted
+users.
+
+Test your actual [exe.dev SSH destination](https://exe.dev/docs/faq/ssh-destination.md)
+on port 22 (placeholders below):
+
+```sh
+ssh -i "$HOME/.ssh/cella-owner" -o IdentitiesOnly=yes YOUR_VM.exe.xyz
+# If necessary, use the gateway form:
+ssh -i "$HOME/.ssh/cella-owner" -o IdentitiesOnly=yes vm+YOUR_VM@vm.exe.xyz
+export CELLA_HOST=YOUR_VM.exe.xyz  # or vm+YOUR_VM@vm.exe.xyz
 export CELLA_SSH_KEY="$HOME/.ssh/cella-owner"
 ```
 
-Port 22 is the default. Flags are `--host`, `--identity` and `--ssh-port`.
-Use a literal working SSH destination, not a config alias: the client passes
-`-F /dev/null` and disables PTY, forwarding, multiplexing and local commands.
-Its batch SSH specifies the owner private key with `-i` and `IdentitiesOnly=yes`;
-it cannot prompt to unlock encrypted keys. Prefer a passphrase-protected key
-unlocked beforehand using `ssh-add "$CELLA_SSH_KEY"`, or use an empty-passphrase
-key with careful file protection. The local agent may authenticate, but is
-never forwarded to the VM; host storage credentials are never forwarded either.
-SSH host-key checking is strict; verify the **VM** host fingerprint before
-trusting it in `known_hosts`.
-The public key registered with exe.dev authenticates the owner; no
-`celld-deploy-key` enrollment is needed on the VM.
+**Verify the VM's SSH host-key fingerprint independently** through trusted VM
+access or the operator before accepting its `known_hosts` entry. The owner
+*.pub* authentication-key fingerprint above is not the VM's server fingerprint.
+The [exe.dev host-key FAQ](https://exe.dev/docs/faq/host-key.md) covers
+`ssh exe.dev`, not necessarily either VM destination. For the direct-hostname
+form you may inspect a scan, but a scan alone cannot authenticate the host:
 
-`cella` sends only the fixed remote command
-`sudo -n /usr/local/bin/celld-ctl transport` through owner SSH; parameters
-and prepared files are data on stdin, not shell commands. The owner needs
-passwordless sudo for that command. That is a client
-protocol guard, **not an SSH authorization boundary**: the same owner SSH
-identity can run arbitrary VM commands. Never distribute it to CI/untrusted
-users. There is no dedicated SSH listener, port-forwarding, relay or tailnet
-requirement.
+```sh
+ssh-keyscan -t ed25519 YOUR_VM.exe.xyz > "$HOME/.ssh/cella-vm-key.scan"
+ssh-keygen -lf "$HOME/.ssh/cella-vm-key.scan"
+# Only after an independent fingerprint match:
+cat "$HOME/.ssh/cella-vm-key.scan" >> "$HOME/.ssh/known_hosts"
+chmod 600 "$HOME/.ssh/known_hosts"
+```
 
-## Deploy
+For `vm+YOUR_VM@vm.exe.xyz`, verify the fingerprint presented for **that
+actual destination** against its trusted value; do not reuse a scan from
+`YOUR_VM.exe.xyz`. Investigate key changes, never disable host-key checking.
+`cella` ignores `~/.ssh/config` (`-F /dev/null`), so set the literal working
+`CELLA_HOST` and registered `CELLA_SSH_KEY` (or `--host` and `--identity`).
+`CELLA_SSH_PORT`/`--ssh-port` defaults to 22. No SSH agent or storage credentials
+are forwarded. On the VM the owner must be able to run
+`sudo -n /usr/local/bin/celld-ctl transport` without a password. `cella` sends
+only that fixed command, but **ordinary owner SSH/sudo remains VM-wide**, not
+a scoped deploy identity.
 
-From your existing Wrangler project:
+## Deploy and inspect
+
+Install your project dependencies and run from its Wrangler project directory:
 
 ```sh
 cella deploy
-cella --project ./my-project deploy
-cella --slug alternate-route deploy
-cella deploy --source-revision COMMIT_SHA  # explicit source label
-```
-
-1. Extract the Worker name as the hosted slug (or use `--slug`) and ask the
-   host to provision it. The host returns its exact native celld pin, not storage
-   configuration. Invalid builds may leave a disabled allocation, never a route.
-2. Download/cache and verify that exact native release. Run native `celld deploy
-   --dry-run --json` locally, with local esbuild and a fixed dummy bucket argument.
-   No object-store client is created in this dry run; storage environment variables
-   are removed from the build process. Native configuration/build errors keep
-   their exit code. No package or user build commands execute on the VM.
-3. Capture the resulting JavaScript/standard WASM modules and explicit static
-   assets. Send the bounded prepared package and source revision over SSH. Do not
-   send the repository, node_modules, local credential files, or build executables.
-4. The host independently validates paths and package bounds, stages immutable
-   regular files and constructs a private deployment-only config copy. It uses
-   `no_bundle` with the already-built module, preserving runtime settings while
-   removing build-only `define`/`rules` fields and replacing source paths. Your
-   original Wrangler file is never rewritten. Native celld validates this copy
-   and its version must match the local build before publication.
-5. The host's dedicated unprivileged publisher runs exact pinned native celld
-   with host-owned storage settings and credentials. It uploads using native
-   publication semantics, then the manager verifies the durable pointer,
-   activates/reloads the app, checks readiness and records history.
-
-Only the host has storage credentials. Existing local AWS settings are neither
-needed nor sent to it. Bucket allocation and credentials remain operator state.
-Native publish JSON is printed on stdout; build/publish progress is stderr.
-
-`--slug` changes routing identity only; it does not rename the native Worker.
-Caddy preserves the full `/SLUG/` path. Initial support is JavaScript/TypeScript,
-asset-only Workers, prebundled `no_bundle` projects and standard WASM modules.
-Container/Python builds and nonstandard copied module extensions are rejected
-rather than executing user build tools on the host. Legacy bucket-root imports
-are protected from this automated publishing path; updates need an operator.
-
-Transport policy: at most 32 MiB of package JSON, 24 MiB decoded files, 64 KiB
-configuration JSON, 4096 files, 8192 staging directories, and safe relative paths
-up to 512 bytes. These are independent of native limits.
-Use a dedicated `public`/`dist` assets directory: every regular file in the
-explicit asset tree is included, including dotfiles. Native forbids symlinks,
-special files, root `.assetsignore` and root `_worker.js`; `_headers` and
-`_redirects` remain meaningful metadata. Do not put credentials in your assets
-folder or Wrangler vars. No runtime app-secret manager is provided.
-
-The default source revision is Git HEAD, suffixed `-dirty` for uncommitted or
-untracked changes; without Git it is null with a warning. Explicit revisions are
-1–200 ASCII letters/digits or `.`, `_`, `/`, `-`. A revision is a label, not a
-source archive. Rollback means redeploying a previous source revision. If native
-publication succeeds but activation fails, the command fails with the published
-version and recovery guidance; a running node can already adopt that pointer.
-Check `status`/`logs` before retrying. There is no distributed rollback transaction.
-
-## Local development
-
-```sh
-cella dev --celld-version X.Y.Z
-cella --project ./my-project dev --celld-version X.Y.Z -- --port 9876 --no-watch
-# Or: export CELLA_CELLD_VERSION=X.Y.Z; cella dev
-```
-
-An explicit exact pin needs neither SSH nor credentials. Without one, `dev`
-obtains an existing target's pin via SSH; it does not provision a target.
-Native celld owns watching, local state and serving. Extra native args follow `--`.
-
-## Read-only commands
-
-```sh
 cella status
-cella logs --lines 100             # 1–1000, bounded snapshot
+cella logs --lines 50
 cella deployments list
-cella --slug APP_SLUG status        # no project directory needed
+# Other choices:
+cella --project ./my-project deploy
+cella --slug alternate-slug deploy
+cella deploy --source-revision COMMIT_SHA
+cella --slug APP_SLUG status
 ```
 
-These require only SSH settings. Status/history are JSON; logs are journal text.
-The optional starter command is omitted: existing projects work as-is.
+First deploy provisions and activates the app. The Worker name is the default
+slug; `--slug` changes the directory/routing identity, not the native Worker.
+Port 8000 lists active slugs linking to their dedicated Caddy ports (9101–9999)
+via exe.dev's authenticated alternate-port proxy. Each app serves at `/` on its
+port, preserving Wrangler root routes without slug path prefixes. Status and
+deployment history are JSON; logs are bounded journal text (`--lines` 1–1000).
+A status request for an unknown slug before first deploy is expected.
 
-## Tool discovery and cache
+`cella` downloads and verifies the host's exact native celld pin, builds locally
+with native `deploy --dry-run`, and uploads a bounded package of built modules,
+explicit assets and config. It sends no repository, node_modules, credential
+files or build executables. The host independently validates and stages it,
+uses a private deployment-only config without modifying your Wrangler file,
+and publishes with its own credentials using the pinned native binary. No user
+build tool executes on the VM. JavaScript/TypeScript, asset-only and standard
+WASM modules are supported; container/Python builds and nonstandard copied
+module extensions are rejected. Legacy bucket-root imports need an operator.
 
-`CELLD_ESBUILD` wins; otherwise project/ancestor `node_modules/.bin/esbuild`
-is detected. npm/pnpm/Yarn lockfiles and `packageManager` select tooling; Yarn
-PnP uses a fixed local wrapper with Corepack networking disabled. Native missing-
-tool errors remain authoritative; asset-only/prebundled projects need no esbuild.
+Keep secrets out of asset directories and Wrangler vars: explicit asset trees
+include dotfiles and there is no runtime app-secret manager. The package limits
+are 32 MiB JSON, 24 MiB decoded files, 64 KiB config, 4096 files and 8192
+staging directories. The default revision label is Git HEAD (`-dirty` if
+modified), or null without Git; `--source-revision` sets a label, not a source
+archive. Rollback is redeployment of a prior revision, not reversal of data
+migrations. If publish succeeds but activation fails, the pointer may already
+be adopted; check status and logs before retrying.
 
-Exact releases are cached in
-`${CELLA_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/cella}/releases/vX.Y.Z/TARGET/celld`.
-Downloads use upstream GitHub HTTPS gzip assets; every reuse verifies the native
-version. There is no latest fallback, release mirror, or automatic provenance
-attestation verification. Keep the cache private to the invoking user.
-
-## Wire contract
-
-Ordinary requests remain one JSON document followed by EOF, limited to 16 KiB.
-Deploy uses a <=16 KiB JSON header followed by newline, then **exactly**
-`bundle_size` bytes of prepared-package JSON, then EOF. The header is:
-
-```json
-{"op":"deploy","slug":"app","celld_version":"X.Y.Z","version_id":"16hex","source_revision":"COMMIT_SHA","bundle_size":1234}
-```
-
-The package contains `config`, `modules`, `assets`; file records have `path` and
-base64 `content`. It carries no target paths, credentials or executable commands.
-The server independently validates it, rejects trailing/truncated data and
-returns the existing bounded `{ok:true,result:...}` / `{ok:false,error:...}` wrapper.
-Ordinary/incomplete headers have a 30-second input deadline; a valid deploy
-header extends total upload time to 180 seconds, including EOF. The operation
-has a separate overall failsafe and bounded native phases.
-Responses are <=1 MiB; banners/non-JSON responses fail. Native storage failures
-are redacted before reaching the client.
-
-## Tests
-
-```sh
-cargo test -p cella
-cargo clippy -p cella --all-targets -- -D warnings
-```
-
-Hermetic native/SSH/tool fixtures and host tests cover local credential-free
-builds, capture, bounded packages, exact pin/version checks, rejected paths,
-native failure gating and publish/activate behavior. Real instance deployments
-are operator integration tests, not automatic production load tests.
+`CELLD_ESBUILD` overrides project/ancestor `node_modules/.bin/esbuild`; tool
+discovery uses npm/pnpm/Yarn lockfiles and `packageManager`. Asset-only or
+prebundled projects may not need esbuild. Native release downloads use upstream
+GitHub HTTPS and are cached privately under
+`${CELLA_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/cella}/releases/`;
+version is verified on reuse. No automatic provenance attestation check is
+provided. For operator lifecycle, old-SSH migration and storage recovery see
+[operations](operations.md).

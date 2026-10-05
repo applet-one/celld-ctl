@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 #[derive(Parser)]
-#[command(version, about = "Local celld development and owner SSH deployments")]
+#[command(version, about = "Owner SSH deployments for celld applications")]
 struct Cli {
     /// Wrangler project directory or configuration file (never rewritten).
     #[arg(long, global = true, default_value = ".")]
@@ -32,14 +32,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Action {
-    /// Run local native celld dev. No SSH needed when a release is explicitly pinned.
-    Dev {
-        #[arg(long, env = "CELLA_CELLD_VERSION")]
-        celld_version: Option<String>,
-        /// Additional native dev arguments, after --.
-        #[arg(last = true)]
-        native_args: Vec<String>,
-    },
     /// Build locally without storage credentials; upload over SSH for host publication.
     Deploy {
         /// Source label; defaults to Git HEAD, suffixed -dirty for local changes.
@@ -82,18 +74,6 @@ impl Cli {
     }
 }
 
-fn project_root(project: &Path) -> Result<PathBuf> {
-    let path = project.canonicalize().context("resolve project path")?;
-    if path.is_file() {
-        Ok(path
-            .parent()
-            .context("project config has no parent")?
-            .to_path_buf())
-    } else {
-        Ok(path)
-    }
-}
-
 fn source_revision(root: &Path) -> Option<String> {
     let output = Command::new("git")
         .args(["rev-parse", "--verify", "HEAD"])
@@ -127,33 +107,6 @@ struct NativeDeployment {
 
 fn run(cli: Cli) -> Result<i32> {
     match &cli.command {
-        Action::Dev {
-            celld_version,
-            native_args,
-        } => {
-            let version = match celld_version {
-                Some(version) => version.clone(),
-                None => {
-                    let slug = cli.slug()?;
-                    cli.ssh().context("dev needs --celld-version/CELLA_CELLD_VERSION, or an SSH target to obtain its exact pin")?
-                        .target(&Request::Target { slug: slug.clone() }, &slug)?.celld_version
-                }
-            };
-            let binary = release::ensure(&version, &release::cache_root()?)?;
-            let root = project_root(&cli.project)?;
-            let mut command = Command::new(binary);
-            command
-                .arg("dev")
-                .arg(cli.project.canonicalize()?)
-                .args(native_args)
-                .current_dir(&root);
-            let _tools = toolchain::configure(&mut command, &root)?;
-            Ok(command
-                .status()
-                .context("run native celld dev")?
-                .code()
-                .unwrap_or(1))
-        }
         Action::Deploy {
             source_revision: explicit_revision,
         } => {
