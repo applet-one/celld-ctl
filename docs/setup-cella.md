@@ -3,7 +3,9 @@
 **Run these steps on your laptop/workstation or CI runner—not the host VM.**
 The operator must first complete [A. Set up celld-ctl](setup-host.md).
 You need an existing Wrangler Worker project and restricted SSH access, but
-**no R2 credentials, bucket name, endpoint or region**.
+**no host object-store credentials, bucket name, endpoint or region**.
+Application R2 bindings in Wrangler, if used, are separate from the host's
+storage provider.
 
 ## B1. Install/update cella
 
@@ -158,13 +160,13 @@ SSH without setting a separate version. Native celld owns watching/local state.
 | Host-key verification failed | B4 for the **dedicated** service and exact hostname/port; compare the operator's fingerprint |
 | Unknown app from `status` | Run the first successful `cella deploy`; status does not create apps |
 | esbuild missing | Install the project's dependencies/local esbuild; or configure `CELLD_ESBUILD` locally |
-| Native storage/publish error | Ask the host operator to check A3; do **not** add R2 credentials on your laptop |
+| Native storage/publish error | Ask the host operator to check [host storage](setup-host.md#a3-configure-storage-on-the-host-only) and service health; do **not** add host storage credentials on your laptop |
 | Pin/version mismatch | Check client/host 0.2 compatibility and exact native pin; do not substitute latest |
 | Publish succeeded but activation failed | Inspect status/logs and retry the same source; the published pointer can already be adopted |
 
 For CI, follow B2–B5 with a separate key, private network access, a verified
 `known_hosts` entry and `--source-revision COMMIT_SHA`. Only SSH credentials
-belong in the CI deployment setup; no R2 secret is needed.
+belong in the CI deployment setup; no host object-store secret is needed.
 
 Protocol, transport limits, tooling, rollback caveats and detailed behavior:
 [developer reference](cella.md). Operator key revocation and backups:

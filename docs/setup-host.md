@@ -5,6 +5,12 @@ Developers follow [B. Set up cella on your dev machine](setup-cella.md) afterwar
 Only the host operator configures object storage; developers need only restricted
 SSH access and their existing Worker project.
 
+The installer selects local RustFS by default for new development/testing hosts,
+but the [live compatibility gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
+has not passed. Treat this path as **experimental**, not a qualified host setup:
+do not put irreplaceable data on it. Use `--storage external` to opt into the
+existing external S3-compatible setup.
+
 This guide is for a **new host**. For an existing deployment, back up its
 configuration and follow [migration/operations](operations.md) instead of
 replacing its Caddy configuration or moving its fleet prefix.
@@ -17,16 +23,25 @@ Python 3, curl, gzip, and administrator/sudo access. From this repository:
 ```sh
 cargo build --release --locked -p celld-ctl
 sudo scripts/install-host.sh
+# For external storage instead, use:
+# sudo scripts/install-host.sh --storage external
 ```
 
 The installer creates the runtime/publisher/deployment accounts and starts a
 separate deployment-only SSH service, `cella-sshd`, on **127.0.0.1:2222**.
-It leaves your existing administrator/platform SSH service untouched. It does
-not install native celld, configure storage, join a private network, or enroll
-any developer keys. Node.js/esbuild are not required on the host for publishing
-prepared deployments.
+It leaves your existing administrator/platform SSH service untouched and does
+not join a private network or enroll developer keys. A fresh default install
+prepares local RustFS, native celld, generated storage credentials and initial
+Caddy configuration; check its output for errors. An installer readiness check
+is **not** the still-pending live compatibility gate. Existing host storage
+settings should be preserved; do not change modes as an implicit migration.
+Node.js/esbuild are not required on the host for publishing prepared deployments.
 
 ## A2. Install the exact native celld release
+
+These manual steps apply when the installer has not installed the pinned native
+binary, or if you are managing an external-storage host manually. Do not replace
+an existing app's pin when reinstalling.
 
 The example host configuration pins `0.6.1`. Install that release, or choose
 another exact supported release and set the same version in A3. Never use a
@@ -60,9 +75,16 @@ Temporary downloads and installed binaries stay outside the source checkout.
 
 ## A3. Configure storage on the host only
 
+**External S3-compatible storage:** select `--storage external` on a fresh host,
+then follow the commands below. External mode does not create a bucket or
+credentials. A missing external configuration means setup is incomplete; it
+must not silently fall back to RustFS. Do not switch an existing host by
+changing the installer flag: defaults do not migrate persisted app targets or
+objects.
+
 ```sh
 sudo test -e /etc/celld-ctl/config.json || \
-  sudo install -o root -g root -m 600 examples/config/config.json.example \
+  sudo install -o root -g root -m 600 examples/config/config.external.json.example \
     /etc/celld-ctl/config.json
 sudoedit /etc/celld-ctl/config.json
 ```
@@ -92,9 +114,32 @@ Use credentials able to read/write the host's fleet bucket. Never commit this
 file, put credentials in Wrangler, or send them to developers/CI. The same
 host-owned credentials support native publication and durable runtime storage.
 
+### Experimental single-node local storage
+
+On a fresh default install, the installer and operator-only
+`celld-ctl storage prepare-local` / `celld-ctl storage init-local` helpers
+provision RustFS with bucket `celld-dev`, endpoint
+`http://127.0.0.1:9000`, region `us-east-1`, data under `/var/lib/rustfs`, and
+root-only generated credentials under `/etc/rustfs/rustfs.env` and
+`/etc/celld/node.env`. The installer prepares credentials before starting the
+service and initializes the bucket afterward; these are root-only host actions,
+not developer SSH commands. The local S3 listener must remain loopback-only and
+the console disabled. Its single shared generated credential pair is an
+administrative RustFS credential, **not** per-app IAM isolation.
+
+The initial local example is illustrative, not a migration tool. Reinstallation
+must preserve existing RustFS data, credentials, registry, app pins, deployment
+keys and server identity. It must reject inconsistent/unknown local state
+rather than overwrite it. Local compatibility, cache-free Durable Object
+recovery, outage and restore behavior remain **unqualified** until the
+[gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
+is recorded; an apparently successful installation is not proof of those
+properties. Do not copy the local example config over a live host.
+
 ## A4. Initialize the application proxy
 
-**Only on a fresh host with no existing port-8000 workload:**
+**Only on a fresh host with no existing port-8000 workload, if the installer
+has not already initialized Caddy:**
 
 ```sh
 sudo install -o root -g root -m 644 examples/caddy/Caddyfile.initial /etc/caddy/Caddyfile
@@ -194,12 +239,17 @@ server's key may differ from the primary/platform SSH key on port 22.
 sudo systemctl is-active caddy cella-sshd
 sudo celld-ctl list
 sudo ss -ltnp
+# If using installer-managed local storage:
+sudo systemctl is-active rustfs.service
 ```
 
 Confirm the pinned binary and root-only storage configuration exist; Caddy owns
 8000, deployment SSH is loopback 2222, and the private TCP path is reachable from
 the developer's machine. An empty app registry is normal before the first deploy.
 No manual `create`/`enable` is needed: `cella deploy` provisions and activates it.
+For local storage, verify the S3 listener is loopback-only on port 9000 and
+check the installer's native compatibility/readiness results; a running service
+by itself is not proof that durable publication works.
 
 Next: **[B. Configure and set up cella on your dev machine](setup-cella.md)**.
 Advanced lifecycle, migrations, backups and capacity: [operations](operations.md).

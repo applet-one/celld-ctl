@@ -8,8 +8,10 @@ cella deploy -> local native dry-run/esbuild
              -> bounded prepared package over SSH -> celld-ctl
                                                     | native dry-run verification
                                                     | native publish (celld-publish user)
-                                                    | host-only R2 settings/credentials
+                                                    | host-only storage settings/credentials
                                                     +-> object-store app prefix
+                                                        local RustFS (experimental default, loopback :9000)
+                                                        or external HTTPS S3 storage
                                                     | pointer/readiness verification
                                                     +-> activate/reload + history
 
@@ -27,6 +29,15 @@ Every independently coded app gets a distinct celld fleet prefix such as
 `s3://BUCKET/cells/app` and its own local celld process. Caddy preserves the full
 path: `/app/foo` reaches the app as `/app/foo`. No celld internal listener is
 public. The directory at `/` is read-only, not a management interface.
+
+The local backend shares one RustFS process and bucket across apps;
+prefixes, not storage processes, separate fleets. Local RustFS is single-node
+development/testing storage, not HA. Its persistent data is authoritative,
+whereas `/var/lib/celld/APP_SLUG` is an app cache. External storage remains
+an explicit alternative; existing registry targets are not migrated by changing
+host defaults. The default is experimental until the
+[live compatibility gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
+passes.
 
 This is a trusted-deployer single-host MVP, not a hostile multi-tenant boundary.
 Deploy keys are fleet-wide; serving uses a shared runtime account. The dedicated

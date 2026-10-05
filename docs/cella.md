@@ -7,9 +7,12 @@ page is the detailed client/protocol reference, not the onboarding checklist.
 
 `cella` is the developer client, separate from the host/operator `celld-ctl`.
 Keep your existing `wrangler.jsonc` (or `wrangler.json`). **Deployment requires
-only the restricted SSH connection: no local R2 credentials, bucket name,
+only the restricted SSH connection: no local host object-store credentials, bucket name,
 endpoint, or region.** Both client and host must use version 0.2.0 or later;
 the original 0.1 client used direct-to-object-store publication.
+
+This storage contract does not remove application-level R2 bindings from
+Wrangler: those bindings are distinct from the host's object-store backend.
 
 ## Install and prerequisites
 

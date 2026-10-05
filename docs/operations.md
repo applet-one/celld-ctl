@@ -22,17 +22,23 @@ sudo scripts/install-host.sh
 The installer installs binaries, the systemd template, bounded application
 journal namespace, a locked-down SSH deploy account, a separate loopback-only `cella-sshd` daemon
 on port `2222`, and its narrow sudo rule. The primary SSH service is untouched.
-It does **not** migrate an existing service, replace a running Caddy configuration,
-add deploy keys, install celld releases, or write storage credentials for you.
-Inspect templates and back up existing configuration before installation.
+It does **not** migrate existing application object data or app pins, join a
+private network or add deploy keys. Inspect templates and back up existing
+configuration before installation. On a fresh host, it defaults to
+single-node local RustFS; `sudo scripts/install-host.sh --storage external`
+opts into manual external S3-compatible storage configuration. The local
+default is **experimental** until the
+[live compatibility gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
+passes. Installer readiness alone does not qualify it.
 
-Copy `examples/config/config.json.example` to `/etc/celld-ctl/config.json` and
-replace placeholders. Make it root-owned mode `0600`. Install each exact native
+For manual external storage setup, copy
+`examples/config/config.external.json.example` to `/etc/celld-ctl/config.json`
+and replace placeholders. Make it root-owned mode `0600`. Install each exact native
 celld release, root-owned and executable, at
 `/usr/local/lib/celld/releases/vVERSION/celld`. The configured release becomes
 new apps' pin; changing the default does not upgrade existing apps.
 
-Write only the node's storage credential variables to `/etc/celld/node.env`,
+For manual external setup, write only the node's storage credential variables to `/etc/celld/node.env`,
 root-owned mode `0600` (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional
 `AWS_SESSION_TOKEN`). The host uses these for native publication as well as
 serving. Developers and CI do not need storage credentials or bucket settings.
@@ -44,7 +50,8 @@ Celld and internal/operator listeners bind to loopback. Only Caddy binds to
 headers are trusted **only** because this host is behind that trusted proxy.
 Do not expose this configuration as a direct public HTTP server.
 
-On a **new** host with no existing port-8000 workload, initialize Caddy explicitly:
+On a **new** host with no existing port-8000 workload, initialize Caddy if the
+installer has not already done so:
 
 ```sh
 sudo install -o root -g root -m 644 examples/caddy/Caddyfile.initial /etc/caddy/Caddyfile
@@ -195,6 +202,54 @@ not replace registry, configuration, key inventory or release-binary backups.
 Restoration should be performed with services stopped and ownership/modes
 preserved; validate the pinned binaries and Caddy configuration before starting.
 
+**`celld-ctl backup` does not include object-store data.** On a local RustFS
+host, `/var/lib/rustfs` is authoritative app data, not a disposable cache.
+`/var/lib/celld/APP_SLUG` is a local app cache. Losing the VM's RustFS volume
+may lose acknowledged application data. Store an independent off-VM snapshot
+if recovery from VM loss matters; this development/testing setup is not HA.
+
+### Local-storage service and recovery (when installed)
+
+Inspect `systemctl status rustfs.service` and `journalctl -u rustfs.service`
+on the host; verify the S3 listener is only `127.0.0.1:9000` with `ss -ltnp`
+and that the console has not been enabled. Check available disk space and
+permissions on `/var/lib/rustfs` (private to `rustfs`) and root-only
+`/etc/rustfs/rustfs.env`, `/etc/celld/node.env` and
+`/etc/celld-ctl/config.json`. Never print credential contents into shared logs.
+An app's local-cache contents alone cannot prove that durable state was restored;
+check a known named Durable Object after restarting both storage and the app.
+Do not replace missing credentials or recreate an apparently empty bucket as
+an outage workaround.
+
+For an **optional cold snapshot**, block deployments and other writers, stop
+affected app services, then stop RustFS. Capture its data directory, RustFS
+service environment, registry, host config, node credentials, deployment SSH
+identity and installed-version metadata, preserving ownership and permissions.
+Copy the snapshot off-host if VM loss is in scope. Restart RustFS first, check
+readiness, then start apps and reopen deployments. Do **not** treat a live
+recursive copy of RustFS's files as a consistent backup. Restore only onto an
+isolated host with writers stopped, the correct pinned binaries/configuration
+and matching credential pair; verify a known named object's state before
+reopening service. The cold-snapshot restore remains to be proven by the
+[disposable-host gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default).
+
+There is no remotely accessible reset command. For a disposable host, stop
+deployment access and app/storage services, archive registry/config/credentials
+and RustFS data together, then explicitly reset the whole instance under an
+operator-reviewed procedure. Never clear only RustFS data while retaining app
+registry targets/caches, or clear only the registry while retaining app object
+data. Reinstalling is **not** a reset and must not delete application data.
+
+No automatic local-to-external or external-to-local migration is provided.
+Changing the host default affects new apps, not persisted targets. A migration
+requires quiescing writers, copying complete object namespaces, updating each
+registry target/generated app input and validating recovery; native lease and
+session handling require a separate reviewed procedure. Keep legacy bucket-root
+imports intact. Upgrades must be explicit: pin and verify the replacement native
+celld/RustFS artifacts, take a cold snapshot, test rollback/recovery on a
+disposable host, and never let a routine reinstall silently rotate credentials
+or change an app pin.
+
 Capacity testing is an explicit operational step, not something installation
 runs against a production bucket. Exercise 10, then 25, then 50 representative
 apps while measuring cgroup memory, request latency and CPU. Increase capacity
@@ -247,7 +302,7 @@ execution time, file/directory counts, configuration size, transfer size and
 decoded bytes are bounded; storage
 credentials are redacted from errors. Temporary staging is cleaned up after
 normal completion/failure. Following a process crash, an operator can inspect
-and remove abandoned stage directories; never delete durable R2 data.
+and remove abandoned stage directories; never delete durable object-store data.
 
 Keep client and host at version 0.2.0 or later. The older client published directly
 to object storage and is not compatible with minimal SSH deployment targets.
