@@ -81,12 +81,6 @@ pub enum Request {
     Target {
         slug: String,
     },
-    Activate {
-        slug: String,
-        version_id: String,
-        #[serde(default)]
-        source_revision: Option<String>,
-    },
     Deploy {
         slug: String,
         celld_version: String,
@@ -115,7 +109,6 @@ impl Request {
         match self {
             Self::Provision { slug }
             | Self::Target { slug }
-            | Self::Activate { slug, .. }
             | Self::Deploy { slug, .. }
             | Self::Logs { slug, .. }
             | Self::Status { slug }
@@ -126,12 +119,7 @@ impl Request {
         if !valid_slug(self.slug()) {
             return Err("invalid slug: use 1-63 lowercase letters, digits or hyphens, starting and ending alphanumeric");
         }
-        if let Self::Activate {
-            version_id,
-            source_revision,
-            ..
-        }
-        | Self::Deploy {
+        if let Self::Deploy {
             version_id,
             source_revision,
             ..
@@ -169,12 +157,6 @@ impl Request {
             }
         }
         Ok(())
-    }
-    pub fn mutates(&self) -> bool {
-        matches!(
-            self,
-            Self::Provision { .. } | Self::Activate { .. } | Self::Deploy { .. }
-        )
     }
 }
 
@@ -244,11 +226,14 @@ mod tests {
             r#"{"op":"target","slug":"a","path":"/etc/shadow"}"#,
             r#"{"op":"remove","slug":"a"}"#,
             r#"{"op":"provision","slug":"a","celld_version":"latest"}"#,
+            r#"{"op":"activate","slug":"a","version_id":"abc"}"#,
         ] {
             assert!(serde_json::from_str::<Request>(s).is_err());
         }
-        let r: Request =
-            serde_json::from_str(r#"{"op":"activate","slug":"a","version_id":"abc"}"#).unwrap();
+        let r: Request = serde_json::from_str(
+            r#"{"op":"deploy","slug":"a","celld_version":"0.6.1","version_id":"abc","bundle_size":1}"#,
+        )
+        .unwrap();
         r.validate().unwrap();
     }
 }

@@ -333,33 +333,12 @@ fn malformed_non_dryrun_or_missing_capture_never_uploads() {
     }
 }
 #[test]
-fn explicit_dev_pin_needs_no_host_or_identity() {
+fn unused_dev_command_is_not_part_of_the_owner_deploy_client() {
     let f = Fixture::new();
-    f.native("1.2.3", "echo local-dev");
-    let output = Command::new(env!("CARGO_BIN_EXE_cella"))
-        .env_clear()
-        .env("CELLA_CACHE_DIR", &f.cache)
-        .arg("--project")
-        .arg(&f.root)
-        .args(["dev", "--celld-version", "v1.2.3"])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let output = f.run(&["dev"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unrecognized subcommand 'dev'"));
     assert!(f.requests().is_empty());
-}
-#[test]
-fn dev_without_pin_reads_minimal_target() {
-    let f = Fixture::new();
-    f.native("1.2.3", "echo local-dev");
-    assert!(f.run(&["dev"]).status.success());
-    assert_eq!(
-        f.requests(),
-        vec![serde_json::json!({"op":"target","slug":"my-app"})]
-    );
 }
 #[test]
 fn read_only_commands() {

@@ -507,6 +507,7 @@ fn transport_rejects_unknown_commands_fields_paths_and_large_inputs() {
         br#"{"op":"remove","slug":"app"}"#.as_slice(),
         br#"{"op":"target","slug":"app","config":"/tmp/x"}"#,
         br#"{"op":"provision","slug":"../x"}"#,
+        br#"{"op":"activate","slug":"app","version_id":"abc"}"#,
         br#"{"op":"activate","slug":"app","version_id":"abc","source_revision":"a\nb"}"#,
         br#"{"op":"logs","slug":"app","lines":1001}"#,
         br#"{"op":"target","slug":"app"} {}"#,

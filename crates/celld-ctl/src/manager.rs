@@ -67,11 +67,6 @@ impl<R: Runtime> Manager<R> {
         match request {
             Request::Provision { slug } => Ok(serde_json::to_value(self.provision(&slug)?)?),
             Request::Target { slug } => Ok(serde_json::to_value(self.registry.get(&slug)?.target)?),
-            Request::Activate {
-                slug,
-                version_id,
-                source_revision,
-            } => self.activate(&slug, Some(&version_id), source_revision.as_deref(), false),
             Request::Deploy { .. } => bail!("deploy requires a framed prepared bundle"),
             Request::Status { slug } => self.status(&slug),
             Request::Logs { slug, lines } => {
