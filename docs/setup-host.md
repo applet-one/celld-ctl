@@ -5,11 +5,10 @@ Developers follow [B. Set up cella on your dev machine](setup-cella.md) afterwar
 Only the host operator configures object storage; developers need only restricted
 SSH access and their existing Worker project.
 
-The installer selects local RustFS by default for new development/testing hosts,
-but the [live compatibility gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
-has not passed. Treat this path as **experimental**, not a qualified host setup:
-do not put irreplaceable data on it. Use `--storage external` to opt into the
-existing external S3-compatible setup.
+Local RustFS is **opt-in and experimental** until its
+[live compatibility gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
+passes. The no-flag install leaves external S3-compatible storage for the
+operator to configure. Do not put irreplaceable data on an unqualified local host.
 
 This guide is for a **new host**. For an existing deployment, back up its
 configuration and follow [migration/operations](operations.md) instead of
@@ -23,25 +22,25 @@ Python 3, curl, gzip, and administrator/sudo access. From this repository:
 ```sh
 cargo build --release --locked -p celld-ctl
 sudo scripts/install-host.sh
-# For external storage instead, use:
-# sudo scripts/install-host.sh --storage external
 ```
 
 The installer creates the runtime/publisher/deployment accounts and starts a
 separate deployment-only SSH service, `cella-sshd`, on **127.0.0.1:2222**.
 It leaves your existing administrator/platform SSH service untouched and does
-not join a private network or enroll developer keys. A fresh default install
-prepares local RustFS, native celld, generated storage credentials and initial
-Caddy configuration; check its output for errors. An installer readiness check
-is **not** the still-pending live compatibility gate. Existing host storage
-settings should be preserved; do not change modes as an implicit migration.
+not join a private network or enroll developer keys. A fresh no-flag install
+selects external/manual storage and does **not** install or provision RustFS.
+It installs the pinned native celld release and initializes Caddy on a fresh
+host; A2 and A4 give manual checks/fallbacks. Complete A3 to supply the
+external bucket and credentials. Existing host storage settings should be
+preserved; do not change modes as an implicit migration.
 Node.js/esbuild are not required on the host for publishing prepared deployments.
 
 ## A2. Install the exact native celld release
 
-These manual steps apply when the installer has not installed the pinned native
-binary, or if you are managing an external-storage host manually. Do not replace
-an existing app's pin when reinstalling.
+The installer normally installs the pinned native binary on a fresh host.
+Use these manual steps only if the release was not installed or if managing an
+older external-storage host manually. Do not replace an existing app's pin when
+reinstalling.
 
 The example host configuration pins `0.6.1`. Install that release, or choose
 another exact supported release and set the same version in A3. Never use a
@@ -75,8 +74,8 @@ Temporary downloads and installed binaries stay outside the source checkout.
 
 ## A3. Configure storage on the host only
 
-**External S3-compatible storage:** select `--storage external` on a fresh host,
-then follow the commands below. External mode does not create a bucket or
+**External S3-compatible storage (no flag; also `--storage external`):**
+follow the commands below. The installer does not create an external bucket or
 credentials. A missing external configuration means setup is incomplete; it
 must not silently fall back to RustFS. Do not switch an existing host by
 changing the installer flag: defaults do not migrate persisted app targets or
@@ -116,7 +115,8 @@ host-owned credentials support native publication and durable runtime storage.
 
 ### Experimental single-node local storage
 
-On a fresh default install, the installer and operator-only
+On a **fresh disposable development/testing host only**, opt in with
+`sudo scripts/install-host.sh --storage local`. The installer and operator-only
 `celld-ctl storage prepare-local` / `celld-ctl storage init-local` helpers
 provision RustFS with bucket `celld-dev`, endpoint
 `http://127.0.0.1:9000`, region `us-east-1`, data under `/var/lib/rustfs`, and
@@ -130,8 +130,9 @@ administrative RustFS credential, **not** per-app IAM isolation.
 The initial local example is illustrative, not a migration tool. Reinstallation
 must preserve existing RustFS data, credentials, registry, app pins, deployment
 keys and server identity. It must reject inconsistent/unknown local state
-rather than overwrite it. Local compatibility, cache-free Durable Object
-recovery, outage and restore behavior remain **unqualified** until the
+rather than overwrite it. An installer readiness check does **not** establish
+the still-pending live compatibility gate. Local compatibility, cache-free
+Durable Object recovery, outage and restore behavior remain **unqualified** until the
 [gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
 is recorded; an apparently successful installation is not proof of those
 properties. Do not copy the local example config over a live host.

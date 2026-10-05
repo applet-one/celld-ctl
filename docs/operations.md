@@ -24,10 +24,11 @@ journal namespace, a locked-down SSH deploy account, a separate loopback-only `c
 on port `2222`, and its narrow sudo rule. The primary SSH service is untouched.
 It does **not** migrate existing application object data or app pins, join a
 private network or add deploy keys. Inspect templates and back up existing
-configuration before installation. On a fresh host, it defaults to
-single-node local RustFS; `sudo scripts/install-host.sh --storage external`
-opts into manual external S3-compatible storage configuration. The local
-default is **experimental** until the
+configuration before installation. A fresh no-flag installation selects manual
+external S3-compatible storage; it does not install RustFS or create a bucket
+or credentials. `sudo scripts/install-host.sh --storage local` explicitly opts
+into single-node local RustFS on a disposable development/testing host.
+The local path is **experimental** until the
 [live compatibility gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
 passes. Installer readiness alone does not qualify it.
 

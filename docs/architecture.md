@@ -10,8 +10,9 @@ cella deploy -> local native dry-run/esbuild
                                                     | native publish (celld-publish user)
                                                     | host-only storage settings/credentials
                                                     +-> object-store app prefix
-                                                        local RustFS (experimental default, loopback :9000)
-                                                        or external HTTPS S3 storage
+                                                        external HTTPS S3 storage (ordinary setup)
+                                                        or local RustFS (experimental opt-in,
+                                                        loopback :9000)
                                                     | pointer/readiness verification
                                                     +-> activate/reload + history
 
@@ -35,7 +36,7 @@ prefixes, not storage processes, separate fleets. Local RustFS is single-node
 development/testing storage, not HA. Its persistent data is authoritative,
 whereas `/var/lib/celld/APP_SLUG` is an app cache. External storage remains
 an explicit alternative; existing registry targets are not migrated by changing
-host defaults. The default is experimental until the
+host defaults. Local storage remains opt-in until the
 [live compatibility gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
 passes.
 
