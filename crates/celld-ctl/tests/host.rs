@@ -1,6 +1,6 @@
 use anyhow::{ensure, Result};
 use celld_ctl::{
-    config::{atomic_write, parse_credentials, Config, Paths},
+    config::{atomic_write, parse_credentials, storage_origin, Config, Paths},
     manager::Manager,
     registry::App,
     render,
@@ -154,6 +154,60 @@ fn activated(f: &Fixture, slug: &str) -> Manager<Fake> {
     m.activate(slug, Some("abc123"), Some("0123456789"), false)
         .unwrap();
     m
+}
+
+#[test]
+fn storage_origin_policy_is_identical_for_config_and_registry() {
+    for good in [
+        "https://storage.example.invalid",
+        "https://storage.example.invalid:9443/",
+        "http://127.0.0.1:9000",
+        "http://127.0.0.1:9000/",
+    ] {
+        storage_origin(good).unwrap();
+        let f = Fixture::new();
+        let mut config = Config::load(&f.paths).unwrap();
+        config.endpoint = good.into();
+        config.validate().unwrap();
+    }
+    for bad in [
+        "http://localhost:9000",
+        "http://127.1:9000",
+        "http://2130706433:9000",
+        "http://0x7f000001:9000",
+        "http://127.0.0.2:9000",
+        "http://10.0.0.1:9000",
+        "http://0.0.0.0:9000",
+        "http://[::1]:9000",
+        "http://127.0.0.1",
+        "http://127.0.0.1:0",
+        "http://127.0.0.1:9000/path",
+        "http://127.0.0.1:9000?x=1",
+        "http://127.0.0.1:9000/#frag",
+        "http://user@127.0.0.1:9000",
+        "ftp://storage.example.invalid",
+        "https://user:password@storage.example.invalid",
+        "https://storage.example.invalid/path",
+    ] {
+        assert!(storage_origin(bad).is_err(), "accepted {bad}");
+        let f = Fixture::new();
+        let mut config = Config::load(&f.paths).unwrap();
+        config.endpoint = bad.into();
+        assert!(config.validate().is_err(), "config accepted {bad}");
+    }
+}
+
+#[test]
+fn local_only_unit_depends_on_rustfs() {
+    let f = Fixture::new();
+    let mut m = f.manager();
+    m.provision("external").unwrap();
+    let external = m.registry.get("external").unwrap();
+    assert!(!render::unit_override(&external, &f.paths).contains("rustfs.service"));
+    let mut local = external.clone();
+    local.target.endpoint = "http://127.0.0.1:9000".into();
+    let unit = render::unit_override(&local, &f.paths);
+    assert!(unit.contains("[Unit]\nWants=rustfs.service\nAfter=rustfs.service"));
 }
 
 #[test]

@@ -1,10 +1,9 @@
 use crate::{
-    config::{parse_credentials, Paths},
+    config::{parse_credentials, storage_origin, Paths},
     registry::App,
+    s3,
 };
 use anyhow::{bail, ensure, Context, Result};
-use hmac::{Hmac, Mac};
-use sha2::{Digest, Sha256};
 use std::{
     io::Read,
     net::{SocketAddr, TcpStream},
@@ -148,11 +147,6 @@ fn command(binary: &str, args: &[&str], limit: usize, timeout: u64) -> Result<Ve
         std::thread::sleep(Duration::from_millis(10));
     }
 }
-fn hmac(key: &[u8], msg: &[u8]) -> Vec<u8> {
-    let mut m = Hmac::<Sha256>::new_from_slice(key).expect("HMAC permits every key length");
-    m.update(msg);
-    m.finalize().into_bytes().to_vec()
-}
 impl Runtime for RealRuntime {
     fn deploy(
         &mut self,
@@ -243,70 +237,19 @@ impl Runtime for RealRuntime {
             "invalid bucket path"
         );
         let path = format!("/{root}/deploy/current.json");
-        let endpoint = reqwest::Url::parse(&app.target.endpoint)?;
-        ensure!(
-            endpoint.scheme() == "https"
-                && endpoint.username().is_empty()
-                && endpoint.password().is_none()
-                && endpoint.path() == "/"
-                && endpoint.query().is_none()
-                && endpoint.fragment().is_none(),
-            "invalid registry endpoint"
-        );
-        let host = match endpoint.port() {
-            Some(p) => format!(
-                "{}:{p}",
-                endpoint.host_str().context("missing endpoint host")?
-            ),
-            None => endpoint.host_str().context("missing endpoint host")?.into(),
-        };
-        let now = chrono::Utc::now();
-        let date = now.format("%Y%m%d").to_string();
-        let stamp = now.format("%Y%m%dT%H%M%SZ").to_string();
-        let body_hash = hex::encode(Sha256::digest(b""));
-        let mut headers = std::collections::BTreeMap::from([
-            ("host", host.clone()),
-            ("x-amz-content-sha256", body_hash.clone()),
-            ("x-amz-date", stamp.clone()),
-        ]);
-        if let Some(token) = creds.get("AWS_SESSION_TOKEN") {
-            headers.insert("x-amz-security-token", token.clone());
-        }
-        let signed = headers.keys().copied().collect::<Vec<_>>().join(";");
-        let canonical_headers = headers
-            .iter()
-            .map(|(k, v)| format!("{k}:{v}\n"))
-            .collect::<String>();
-        let canonical = format!("GET\n{path}\n\n{canonical_headers}\n{signed}\n{body_hash}");
-        let scope = format!("{date}/{}/s3/aws4_request", app.target.region);
-        let string_to_sign = format!(
-            "AWS4-HMAC-SHA256\n{stamp}\n{scope}\n{}",
-            hex::encode(Sha256::digest(canonical.as_bytes()))
-        );
-        let key = hmac(
-            format!("AWS4{}", creds["AWS_SECRET_ACCESS_KEY"]).as_bytes(),
-            date.as_bytes(),
-        );
-        let key = hmac(&key, app.target.region.as_bytes());
-        let key = hmac(&key, b"s3");
-        let key = hmac(&key, b"aws4_request");
-        let auth = format!(
-            "AWS4-HMAC-SHA256 Credential={}/{scope}, SignedHeaders={signed}, Signature={}",
-            creds["AWS_ACCESS_KEY_ID"],
-            hex::encode(hmac(&key, string_to_sign.as_bytes()))
-        );
-        let mut request = Self::client(10)?
-            .get(format!(
-                "{}{path}",
-                app.target.endpoint.trim_end_matches('/')
-            ))
-            .header("authorization", auth);
-        for (k, v) in headers {
-            request = request.header(k, v);
-        }
-        let response = request
-            .send()
-            .map_err(|_| anyhow::anyhow!("deployment pointer request failed"))?;
+        storage_origin(&app.target.endpoint).context("invalid registry endpoint")?;
+        let client = Self::client(10)?;
+        let response = s3::signed_request(
+            &client,
+            reqwest::Method::GET,
+            &app.target.endpoint,
+            &path,
+            &app.target.region,
+            &creds,
+            b"",
+        )?
+        .send()
+        .map_err(|_| anyhow::anyhow!("deployment pointer request failed"))?;
         ensure!(
             response.status().is_success(),
             "deployment pointer unavailable; complete native celld deploy first"

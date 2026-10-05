@@ -1,10 +1,10 @@
 use anyhow::{bail, ensure, Context, Result};
-use celld_ctl::{config::Paths, manager::Manager, runtime::RealRuntime, transport};
+use celld_ctl::{config::Paths, manager::Manager, runtime::RealRuntime, storage, transport};
 use celld_ctl_core::{Request, Response};
 use serde_json::{json, Value};
 use std::path::Path;
 
-const HELP:&str="celld-ctl (root operator)\n  create|enable|disable|start|stop|restart|remove|target|reload|status SLUG\n  logs SLUG [--lines 1..1000]\n  deployments SLUG\n  list\n  backup\n  import-counter --celld-version VERSION [--version-id ID] [--enabled]\n  transport  (fixed forced SSH command; one JSON request on stdin)\nOperator-only test/staging path injection: --root ABSOLUTE_PATH before command.\n";
+const HELP:&str="celld-ctl (root operator)\n  create|enable|disable|start|stop|restart|remove|target|reload|status SLUG\n  logs SLUG [--lines 1..1000]\n  deployments SLUG\n  list\n  backup\n  storage prepare-local|init-local  (host installer only)\n  import-counter --celld-version VERSION [--version-id ID] [--enabled]\n  transport  (fixed forced SSH command; one JSON request on stdin)\nOperator-only test/staging path injection: --root ABSOLUTE_PATH before command.\n";
 fn require_root() -> Result<()> {
     // SAFETY: geteuid has no preconditions or side effects.
     ensure!(
@@ -32,6 +32,18 @@ fn operator(mut args: Vec<String>) -> Result<Value> {
         Paths::production()
     };
     let operation = args.first().context("missing command")?.as_str();
+    if operation == "storage" {
+        ensure!(
+            args.len() == 2,
+            "storage requires prepare-local or init-local"
+        );
+        match args[1].as_str() {
+            "prepare-local" => storage::prepare_local(&paths)?,
+            "init-local" => storage::init_local(&paths)?,
+            _ => bail!("unknown storage operation"),
+        }
+        return Ok(json!({"ok":true}));
+    }
     let runtime = RealRuntime {
         paths: paths.clone(),
     };

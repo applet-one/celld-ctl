@@ -4,4 +4,6 @@ pub mod publish;
 pub mod registry;
 pub mod render;
 pub mod runtime;
+pub(crate) mod s3;
+pub mod storage;
 pub mod transport;

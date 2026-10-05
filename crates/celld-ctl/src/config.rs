@@ -64,17 +64,7 @@ impl Config {
                 && !bucket.ends_with('-'),
             "invalid bucket"
         );
-        let url = reqwest::Url::parse(&self.endpoint).context("invalid endpoint")?;
-        ensure!(
-            url.scheme() == "https"
-                && url.host_str().is_some()
-                && url.username().is_empty()
-                && url.password().is_none()
-                && url.query().is_none()
-                && url.fragment().is_none()
-                && url.path() == "/",
-            "endpoint must be an HTTPS origin without credentials, path or query"
-        );
+        storage_origin(&self.endpoint)?;
         ensure!(
             !self.region.is_empty()
                 && self.region.len() <= 64
@@ -112,6 +102,41 @@ impl Config {
         );
         Ok(())
     }
+}
+
+/// Accept public HTTPS origins and only a literal, explicitly ported IPv4
+/// loopback HTTP origin. Inspect the original spelling: URL parsing normalizes
+/// alternate numeric IPv4 forms (and could otherwise turn them into loopback).
+pub fn storage_origin(endpoint: &str) -> Result<reqwest::Url> {
+    let url = reqwest::Url::parse(endpoint).context("invalid storage endpoint")?;
+    ensure!(
+        url.host_str().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none()
+            && url.path() == "/",
+        "storage endpoint must be an origin without credentials, path or query"
+    );
+    match url.scheme() {
+        "https" => {}
+        "http" => {
+            let port: u16 = endpoint
+                .strip_prefix("http://127.0.0.1:")
+                .and_then(|s| s.strip_suffix('/').or(Some(s)))
+                .context("HTTP storage requires literal 127.0.0.1 and an explicit port")?
+                .parse()
+                .context("invalid HTTP storage port")?;
+            ensure!(
+                port > 0
+                    && (endpoint == format!("http://127.0.0.1:{port}")
+                        || endpoint == format!("http://127.0.0.1:{port}/")),
+                "HTTP storage is permitted only at literal 127.0.0.1 with an explicit port"
+            );
+        }
+        _ => bail!("storage endpoint requires HTTPS or literal loopback HTTP"),
+    }
+    Ok(url)
 }
 
 /// Paths are selected by the *operator*, never deserialized from transport input/config.
@@ -217,8 +242,14 @@ impl Paths {
                 self.make_dir(parent, 0o755)?;
             }
             self.check_parents(parent)?;
-            fs::create_dir(path)?;
-            fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+            // Two installer/bootstrap callers can race on a previously absent
+            // directory. Recheck type/ownership below rather than failing an
+            // otherwise safe concurrent creation.
+            match fs::create_dir(path) {
+                Ok(()) => fs::set_permissions(path, fs::Permissions::from_mode(mode))?,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(e.into()),
+            }
         }
         self.check_parents(path)
     }
