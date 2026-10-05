@@ -1,91 +1,33 @@
-# Host installation and operations
+# Host operations, migration and recovery
 
-Start with **[A. Set up celld-ctl on the host](setup-host.md)**, then give
-developers **[B. Dev-machine setup](setup-cella.md)**. This page is the operator
-reference for lifecycle, migration, key management, backups and security.
+Start with [host setup](setup-host.md); the owner follows [client SSH
+setup](cella.md#owner-ssh-setup). This single-host trusted-owner system has no
+scoped CI/developer deploy identity or runtime app-secret manager. Keep object
+storage, internal listeners and root-only credentials private. The Caddy
+listeners assume exe.dev's authenticated alternate-port HTTPS proxy, not direct
+unauthenticated Internet exposure.
 
-This is a single-host MVP, not a multi-tenant security boundary. The VM-owner SSH credential has broad host privileges; there are no scoped
-deployment keys or independently authorized CI/developer publishers. The runtime
-uses celld's Worker isolation and a dedicated shared Unix service account. No
-browser management interface, inbound deployment HTTP API, or app-secret
-management is installed.
+## Historical storage gate (October 5, 2026)
 
-## Build and install
+The recorded minimum live test passed on **x86_64 Ubuntu 24.04 in a systemd
+Docker container**, using pinned RustFS 1.0.1 and native celld 0.6.1. It used
+the **old restricted deployment SSH service**, not today's owner-SSH transport.
+A named Durable Object retained counts across an app restart, a controlled
+RustFS stop/restart, and archiving **only** its `/var/lib/celld/APP_SLUG` cache;
+a no-flag reinstall preserved credentials and registry. Storage unavailability
+caused a diagnostic failure, followed by recovery after a controlled restart.
+This is limited container evidence for fresh x86_64 single-node
+development/testing. It does **not** qualify a VM, arm64, abrupt-kill/reboot,
+cold-snapshot restore, competing-writer races, physical power-loss survival,
+production durability or HA. The current owner-SSH workflow requires its own
+checks; do not present the historical restricted-SSH deploy as its test.
 
-On a fresh exe.dev Linux x86_64 single-node development/testing VM with
-systemd, Caddy, Python 3 and a Rust toolchain:
-
-```sh
-cargo build --release --locked
-sudo scripts/install-host.sh
-```
-
-The installer installs binaries, the systemd app template and bounded app
-journal namespace. Deployments reuse the existing exe.dev VM-owner SSH gateway
-and non-interactive owner sudo; the installer does not set up another sshd,
-a deploy account/key, a relay, Tailscale, or change the primary SSH service.
-It does **not** migrate existing application object data or app pins. Inspect templates and back up existing
-configuration before installation. On a **fresh x86_64 host**, no flag installs
-single-node local RustFS, provisions its bucket and root-only credentials, and
-checks native storage readiness. `--storage local` selects it explicitly;
-`--storage external` opts out into manual S3-compatible storage setup.
-On a **fresh arm64/aarch64 host**, a no-flag install refuses to choose:
-specify `--storage local` (not natively qualified on arm64) or
-`--storage external`. Reinstalling a configured host preserves its existing
-mode, registry targets, credentials and app pins; flags do not migrate object
-data. The [October 5, 2026 minimum live gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
-historically passed with the old restricted-SSH transport and cache-free named-object
-recovery in an x86_64 Ubuntu 24.04 **systemd Docker container**, not a VM.
-It does not qualify VM/arm64, abrupt process kills, cold restore, or HA.
-
-For external storage setup (explicitly select `--storage external` on a new
-host), copy
-`examples/config/config.external.json.example` to `/etc/celld-ctl/config.json`
-and replace placeholders. Make it root-owned mode `0600`. Install each exact native
-celld release if managing the host manually or if installer installation failed,
-root-owned and executable, at
-`/usr/local/lib/celld/releases/vVERSION/celld`. The configured release becomes
-new apps' pin; changing the default does not upgrade existing apps.
-
-For external setup, write only the node's storage credential variables to `/etc/celld/node.env`,
-root-owned mode `0600` (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional
-`AWS_SESSION_TOKEN`). The host uses these for native publication as well as
-serving. Developers and CI do not need storage credentials or bucket settings.
-Remote transport targets contain only the slug, exact native version and
-enabled flag; the root operator can still inspect full registry targets.
-
-Celld and internal/operator listeners bind to loopback. App runtime ports are
-8101–8999; each app's Caddy listener uses runtime port + 1000 (9101–9999)
-and serves that app at `/`, preserving request paths without a slug prefix.
-Caddy also serves the read-only slug directory at `:8000`, with links to the
-matching app ports. Access the app listeners through exe.dev's authenticated
-alternate-port proxy. Keep the upstream HTTPS proxy private: forwarded
-host/proto headers are trusted **only** because this host is behind that trusted
-proxy. Do not expose these Caddy listeners as unauthenticated direct public
-HTTP servers.
-
-On a **new** host with no existing port-8000 workload, initialize Caddy if the
-installer has not already done so:
-
-```sh
-sudo install -o root -g root -m 644 examples/caddy/Caddyfile.initial /etc/caddy/Caddyfile
-sudo caddy validate --config /etc/caddy/Caddyfile
-sudo systemctl enable --now caddy
-sudo systemctl reload caddy
-```
-
-Do not overwrite an existing application's proxy configuration blindly. For a
-legacy counter, complete its migration first and account for its special 8100
-runtime / 9100 Caddy port pair, outside the standard 8101–8999 / 9101–9999
-range. Route publication needs Caddy's private admin
-listener running at `127.0.0.1:2019`; it is not an external management endpoint.
-
-## Application lifecycle
+## Lifecycle and routing
 
 ```sh
 sudo celld-ctl create APP_SLUG
 sudo celld-ctl target APP_SLUG
-# Publish using native celld deploy/cella before enabling.
+# Publish with native celld or cella before enabling.
 sudo celld-ctl enable APP_SLUG
 sudo celld-ctl list
 sudo celld-ctl status APP_SLUG
@@ -94,74 +36,39 @@ sudo celld-ctl restart APP_SLUG
 sudo celld-ctl disable APP_SLUG
 ```
 
-Registry state is `/var/lib/celld-ctl/registry.sqlite`; app environment files live
-in `/etc/celld/cells`, and app caches in `/var/lib/celld/APP_SLUG`. Never put these
-paths inside this repository. Ports are transactionally allocated in SQLite;
-they are not hashes of app names. The allocated loopback runtime port
-(8101–8999) determines the dedicated Caddy port by adding 1000; the directory
-slug is not itself a port number. The internal celld port range must be
-disjoint from the serving range and must never be published.
+`cella deploy` provisions and activates automatically. Registry state lives
+in `/var/lib/celld-ctl/registry.sqlite`, app environment files in
+`/etc/celld/cells`, and app caches in `/var/lib/celld/APP_SLUG`. Never store
+them in this checkout. SQLite allocates runtime ports 8101–8999; Caddy exposes
+each active app on its allocated port + 1000 (9101–9999), preserving paths
+at `/`. Port 8000 is a read-only directory of links, not a path router.
+Caddy's private admin listener is `127.0.0.1:2019`. Enable verifies the
+durable deployment pointer and runtime readiness before publishing the route.
+Disable unpublishes and stops the unit. Removing an app must **not** delete
+object-store data; clean up retained local cache only after operator review.
 
-Enable/activation verifies the durable deployment pointer, starts the pinned
-service and checks its private deployment state before publishing its dedicated
-Caddy app listener. The app's port serves `/` and forwards every request path
-unchanged to that app's loopback runtime. There is no app-path route or
-redirect on the directory port 8000. Its `/` page is a generated,
-read-only slug directory linking to matching app ports, not live monitoring.
-Wrangler and app root routes stay unchanged. Use
-`status` to inspect the actual process and deployed version.
+## Owner SSH transport and old-service migration
 
-`disable` unpublishes the app listener/link and stops/disables its unit. Stop/start and
-restart are operator actions, not available to deploy keys. Removal must never
-delete durable object-store data; retained local state should be archived or
-removed deliberately by the operator, not a remote developer.
+`cella` uses an exe.dev-registered **owner** key on SSH port 22, strict
+VM host-key checking, `-F /dev/null`, no forwarding/PTY and the fixed command
+`sudo -n /usr/local/bin/celld-ctl transport`. The owner needs non-interactive
+sudo for that command. The transport bounds its request and permits only
+provision, target, deploy, status, logs and deployments; it never
+selects a bucket, executable or arbitrary host path. Host credentials are
+root-only. **This does not restrict ordinary owner SSH/sudo**. Never give an
+owner key to CI or untrusted users. Revoke a compromised key via exe.dev's
+account key commands, considering other keys and existing sessions. For
+registration and independently verified VM fingerprints (distinct from owner
+key and `ssh exe.dev` fingerprints), follow [client SSH setup](cella.md#owner-ssh-setup).
+Do not alter the platform-managed primary SSH service.
 
-## Owner SSH transport and trust boundary
-
-The VM **owner** registers their public authentication key with the exe.dev
-account (not `celld-deploy-key` on the host), then uses the working direct SSH
-destination `YOUR_VM.exe.xyz` or fallback `vm+YOUR_VM@vm.exe.xyz` on port **22**.
-See [dev-machine setup](setup-cella.md) and exe.dev's
-[SSH destination](https://exe.dev/docs/faq/ssh-destination.md) and
-[ssh-key](https://exe.dev/docs/cli-ssh-key.md) docs. The local key's public
-fingerprint (`ssh-keygen -lf ~/.ssh/cella-owner.pub`) is distinct from the
-server host-key fingerprint verified in `known_hosts`. The published
-[exe.dev fingerprint](https://exe.dev/docs/faq/host-key.md) refers specifically
-to `ssh exe.dev`, not an asserted VM destination fingerprint.
-
-`cella` invokes batch SSH with `-F /dev/null`, explicit `-i`,
-`IdentitiesOnly=yes`, strict host-key checking, no TTY or forwarding, and the fixed command
-`sudo -n /usr/local/bin/celld-ctl transport`. The owner account must already
-have **passwordless sudo** for this command; exe.dev VM owner accounts may have
-broader sudo access. A passphrase-protected key may be preloaded into the local
-agent; the agent is not forwarded. `celld-ctl transport` requires root, accepts
-`transport` with no extra argv and bounds the stdin request. No remote parameter in
-the protocol selects a storage bucket, host path or executable. The transport
-allowlist is provision, target, deploy, activate, status, logs and deployments.
-Only root-held host storage credentials are used during publication.
-
-**This is not a restricted SSH principal.** The owner can use ordinary SSH to
-run other VM commands, and the account's sudo authority is independent of
-`cella`'s narrow wire format. Do not give VM-owner SSH keys to CI, other
-developers or untrusted parties. There is no independently scoped CI deploy
-role, fleet key revocation inventory or dedicated deployment port. Revocation
-of a compromised owner key belongs to the exe.dev account; use
-`ssh exe.dev ssh-key list` / `ssh exe.dev ssh-key remove ...`, and consider
-existing sessions and other owner keys. Avoid altering the platform-managed
-SSH service or opening internal celld/RustFS ports.
-
-## Existing-host migration from dedicated deployment SSH
-
-**For hosts previously installed with the old `cella-sshd` workflow only.**
-Take a [host backup](#history-rollback-backups-and-capacity) and preserve it
-off-host before cleanup. Reinstall the current host binaries, verify direct
-owner SSH and `sudo -n /usr/local/bin/celld-ctl transport`, then test a
-non-mutating `cella status` with the new CLI. The new installer does not remove
-old managed SSH artifacts and does not touch exe.dev's primary gateway. Do not
-delete the only working access path until owner access is verified.
-
-Once owner deployment works, on the VM stop and disable only the *old dedicated*
-service, inspect then remove its known managed artifacts if present:
+For hosts **previously using `cella-sshd` only**: make a
+[backup](#backup-and-recovery), keep an off-host copy, reinstall current host
+binaries, verify direct owner SSH and `sudo -n /usr/local/bin/celld-ctl
+transport`, then test read-only `cella status` using the new client. Do not
+remove the only working access path until owner access works. The installer
+does not remove the old SSH artifacts. Once verified, inspect and stop only
+the old dedicated service, then remove its managed files if present:
 
 ```sh
 sudo systemctl disable --now cella-sshd.service
@@ -173,160 +80,94 @@ sudo rm -f /etc/systemd/system/cella-sshd.service \
 sudo systemctl daemon-reload
 ```
 
-The old installation may also contain `/etc/ssh/cella-deploy/authorized_keys`,
-`/var/empty/cella-deploy`, `/usr/local/bin/celld-deploy-key`, and the
-`cella-deploy` system account. Confirm those are unused by anything else
-before deleting the files/helper/account manually.
-Remove obsolete local relays/port forwards and stale `known_hosts` entries for
-`[OLD_DEPLOY_HOST]:2222` **only after verifying what each entry is**. Remove
-old `CELLA_HOST=cella-deploy@...`, `CELLA_SSH_PORT=2222` and `CELLA_SSH_KEY`
-settings from profiles/CI; replace them with owner destination and registered
-owner key in the private dev-machine environment. Do not delete app registry,
-object data, storage credentials, app units, the real SSH service, or backups.
-Re-running the installer is not a reset or an automatic cleanup/migration.
+Also inspect `/etc/ssh/cella-deploy/authorized_keys`,
+`/var/empty/cella-deploy`, `/usr/local/bin/celld-deploy-key` and the old
+`cella-deploy` account; remove manually **only if unused elsewhere**. Remove
+obsolete port-2222 relays and reviewed stale `known_hosts` entries; replace
+old `CELLA_HOST=cella-deploy@...`/`CELLA_SSH_PORT=2222`/key settings with the
+owner destination and key. Do not delete registry, objects, app units,
+credentials, primary SSH configuration or backups. Reinstallation is not a
+reset or automatic storage migration.
 
-## Counter migration
+## Legacy bucket-root counter migration
 
-An existing bucket-root counter is a special imported legacy app. Do not move
-its fleet prefix or redeploy it into `/cells/counter`. Back up the old unit,
-root-only environment and local state. Gracefully stop the service, copy its
-cache to `/var/lib/celld/counter`, give the service account ownership, and point
-`CELLD_WATCH` at that path. Keep credentials root-owned and readable only via
-systemd's EnvironmentFile. Start the same celld version with serving/internal
-listeners `127.0.0.1:8100` / `127.0.0.1:18100` only as the legacy starting
-point. Port 8100 falls outside the new 8101–8999 app range. For this special
-import alone, its dedicated Caddy listener is **9100**, not a standard
-new-app port; check that it is available before enabling the import. Do not
-retain the former path-based route. Import its existing native version ID with
-`import-counter`; verify the resulting listener and directory link before
-declaring the migration done.
+An imported counter retains its original bucket-root fleet prefix: **do not**
+redeploy it into `/cells/counter`. Back up its unit, root-only environment and
+local state. Gracefully stop the old service; copy its cache to
+`/var/lib/celld/counter`, give the service account ownership and set
+`CELLD_WATCH` to that path. Keep credentials root-owned in systemd's
+EnvironmentFile. Start the *same* pinned celld version with loopback serving
+`127.0.0.1:8100` and internal `127.0.0.1:18100` as the starting point. This
+special import uses dedicated Caddy port **9100**, outside new app ranges;
+check availability and remove the old path route. Import its existing native
+version ID with `import-counter`, then verify the port-8000 link and app
+listener. Check a **known named Durable Object** before and after restart;
+an HTTP 200 alone does not prove persistence. Keep backups outside the repo.
+Migration does not repair unrelated pre-existing fleet ownership errors.
 
-Check a known named Durable Object before and after restart; a successful HTTP
-response alone does not prove persistence. Keep backups outside the repository.
-Migration does not repair unrelated pre-existing fleet ownership failures.
+## Backup and recovery
 
-## History, rollback, backups and capacity
+Successful activation records native deployment ID and source revision. To
+roll back code, check out the previous revision and redeploy; this does not
+undo Durable Object data or schema changes. `sudo celld-ctl backup` writes
+registry and root-only configuration under `/var/lib/celld-ctl/backups`.
+Only snapshots with a `COMPLETE` marker are complete; config, app environments
+and units have separate subdirectories. Store secure copies off-host: they
+contain credentials. Preserve ownership/modes when restoring with services
+stopped, verify the exact pinned binaries and Caddy config before starting.
 
-Successful developer activation records the native deployment ID and source
-revision. Roll back by checking out the chosen prior Git revision and running
-`cella deploy`; this uses the same pinned native parser and deployment engine.
-This does not revert Durable Object data/schema migrations.
+**`celld-ctl backup` excludes object-store data.** On a local RustFS host,
+`/var/lib/rustfs` holds authoritative application data;
+`/var/lib/celld/APP_SLUG` is a disposable *cache*, not the durable store.
+Losing the VM/storage volume may lose acknowledged writes. If VM-loss recovery
+matters, maintain a separate off-VM storage snapshot. On external storage,
+keep the bucket data and its own backup/recovery plan independently.
 
-Back up the registry and root-only configuration with `sudo celld-ctl backup`
-(the destination is under `/var/lib/celld-ctl/backups`) and store the result securely off-host. Only snapshots with a `COMPLETE` marker
-are complete; configuration, app environments and units have separate subdirectories. Registry/config backups contain
-node credentials; they are not public artifacts. Object-store durability does
-not replace registry, configuration, key inventory or release-binary backups.
-Restoration should be performed with services stopped and ownership/modes
-preserved; validate the pinned binaries and Caddy configuration before starting.
+For local service checks inspect `systemctl status rustfs.service`,
+`journalctl -u rustfs.service`, `ss -ltnp` (S3 only on `127.0.0.1:9000`),
+disk space and permissions of `/var/lib/rustfs`, `/etc/rustfs/rustfs.env`,
+`/etc/celld/node.env` and `/etc/celld-ctl/config.json`. Do not print secrets
+in logs. After an app and RustFS restart, read a known named object; a cache
+hit or HTTP success alone is insufficient. Never replace missing credentials
+or initialize an apparently empty bucket during an outage.
 
-**`celld-ctl backup` does not include object-store data.** On a local RustFS
-host, `/var/lib/rustfs` is authoritative app data, not a disposable cache.
-`/var/lib/celld/APP_SLUG` is a local app cache. Losing the VM's RustFS volume
-may lose acknowledged application data. Store an independent off-VM snapshot
-if recovery from VM loss matters; this development/testing setup is not HA.
+For an operator-controlled **cold snapshot**, block deployments/writers; stop
+affected apps and then RustFS. Capture `/var/lib/rustfs`, RustFS service
+environment, registry, host config, node credentials and installed-release
+metadata with ownership/modes intact. Copy off-host when VM loss is in scope.
+Restart RustFS first, check readiness, then restart apps and reopen writers.
+A live recursive copy is **not** a consistent snapshot. Restore onto an
+isolated host with stopped writers and matching credentials/pins; verify a
+known named object's state before reopening service. Cold restore was **not**
+tested in the [October 5 container gate](#historical-storage-gate-october-5-2026):
+practice on a disposable host before relying on it.
 
-### Local-storage service and recovery (when installed)
+There is no remote reset. On a disposable host, stop writers and services,
+archive registry, config, credentials and RustFS data together and use an
+operator-reviewed whole-instance reset; never clear just the bucket or just
+the registry while leaving incompatible references. Reinstall does not reset.
+Changing the storage default only affects new apps: local↔external migration
+requires quiescing writers, copying complete object namespaces, updating
+persisted app targets/generated input and validating recovery. Native leases
+and sessions need a separate reviewed plan; do not treat a live bucket sync as
+sufficient. Protect legacy bucket-root imports. For upgrades, pin and verify
+new native/RustFS artifacts, take a cold snapshot and test rollback/recovery
+on a disposable host; do not rotate credentials or app pins through routine
+reinstallation.
 
-Inspect `systemctl status rustfs.service` and `journalctl -u rustfs.service`
-on the host; verify the S3 listener is only `127.0.0.1:9000` with `ss -ltnp`
-and that the console has not been enabled. Check available disk space and
-permissions on `/var/lib/rustfs` (private to `rustfs`) and root-only
-`/etc/rustfs/rustfs.env`, `/etc/celld/node.env` and
-`/etc/celld-ctl/config.json`. Never print credential contents into shared logs.
-An app's local-cache contents alone cannot prove that durable state was restored;
-check a known named Durable Object after restarting both storage and the app.
-Do not replace missing credentials or recreate an apparently empty bucket as
-an outage workaround.
+Capacity qualification is separate from installation. Test representative
+fleets (e.g. 10, 25, then 50 apps) on disposable hosts while measuring cgroup
+memory, latency and CPU. A small synthetic smoke is not production capacity
+qualification; add hosts before sustained resource saturation.
 
-For an **optional cold snapshot**, block deployments and other writers, stop
-affected app services, then stop RustFS. Capture its data directory, RustFS
-service environment, registry, host config, node credentials and
-installed-version metadata, preserving ownership and permissions.
-Copy the snapshot off-host if VM loss is in scope. Restart RustFS first, check
-readiness, then start apps and reopen deployments. Do **not** treat a live
-recursive copy of RustFS's files as a consistent backup. Restore only onto an
-isolated host with writers stopped, the correct pinned binaries/configuration
-and matching credential pair; verify a known named object's state before
-reopening service. Cold-snapshot restore remains unproven by the
-[minimum container gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default);
-test it separately on a disposable host before relying on this recovery plan.
+## Host publication checks
 
-There is no remotely accessible reset command. For a disposable host, stop
-deployment access and app/storage services, archive registry/config/credentials
-and RustFS data together, then explicitly reset the whole instance under an
-operator-reviewed procedure. Never clear only RustFS data while retaining app
-registry targets/caches, or clear only the registry while retaining app object
-data. Reinstalling is **not** a reset and must not delete application data.
-
-No automatic local-to-external or external-to-local migration is provided.
-Changing the host default affects new apps, not persisted targets. A migration
-requires quiescing writers, copying complete object namespaces, updating each
-registry target/generated app input and validating recovery; native lease and
-session handling require a separate reviewed procedure. Keep legacy bucket-root
-imports intact. Upgrades must be explicit: pin and verify the replacement native
-celld/RustFS artifacts, take a cold snapshot, test rollback/recovery on a
-disposable host, and never let a routine reinstall silently rotate credentials
-or change an app pin.
-
-Capacity testing is an explicit operational step, not something installation
-runs against a production bucket. Exercise 10, then 25, then 50 representative
-apps while measuring cgroup memory, request latency and CPU. Increase capacity
-only after inspection; add a second host before sustained memory/CPU saturation.
-Rust/Wasm developer toolchains and runtime app-secret management remain deferred.
-
-Use `scripts/load-test.py` against already deployed **disposable** apps.
-With its dedicated-port update, `--base-url` identifies the trusted directory
-origin on 8000 and `--slugs` identifies deployed apps; requests target
-each slug's matching dedicated Caddy port at `/`, rather than app paths on
-8000:
-
-```sh
-python3 scripts/load-test.py --base-url http://127.0.0.1:8000 \
-  --slugs test-1,test-2 --requests 1000 --concurrency 4 --dry-run
-# Remove --dry-run and add --allow-mutations after checking the fleet list.
-```
-
-It reports status counts, throughput and latency percentiles, and returns failure
-for any non-2xx result. It never provisions fleets or passes credentials. For
-capacity qualification supply 10, then 25, then 50 representative deployed app
-slugs and measure cgroup/host resources concurrently. A small two-app smoke test
-is not capacity qualification, and synthetic counter traffic is not necessarily
-representative of your workload.
-
-After host installation, verify direct owner login and non-interactive sudo,
-then use a read-only client command:
-
-```sh
-ssh -i "$HOME/.ssh/cella-owner" -o IdentitiesOnly=yes YOUR_VM.exe.xyz \
-  'sudo -n /usr/local/bin/celld-ctl list'
-CELLA_HOST=YOUR_VM.exe.xyz CELLA_SSH_KEY="$HOME/.ssh/cella-owner" \
-  cella --slug APP_SLUG status
-```
-
-An unknown app from `status` is expected before its first deploy. `list` is an
-operator check, not the deployment protocol. Neither test proves least-privilege
-owner access: the owner account still has broad VM authority.
-
-## Host-side publication
-
-The installer creates a separate `celld-publish` system account with no login
-shell. Prepared packages are staged outside the source tree under
-`/var/lib/celld-ctl/staging`, with root-owned immutable files readable only by
-the publisher group. Packages contain built modules and explicit assets, not
-repositories, package-manager scripts or node_modules. The host independently
-normalizes private source paths and uses native `no_bundle`; containers/Python
-builds are refused, so uploaded code is not executed during publication.
-
-A credential-free native dry run validates the prepared deployment and expected
-version. Native publication then runs as the unprivileged publisher with the
-root-read node credentials passed only to that trusted process. Child output,
-execution time, file/directory counts, configuration size, transfer size and
-decoded bytes are bounded; storage
-credentials are redacted from errors. Temporary staging is cleaned up after
-normal completion/failure. Following a process crash, an operator can inspect
-and remove abandoned stage directories; never delete durable object-store data.
-
-Keep client and host at version 0.2.0 or later. The older client published directly
-to object storage and is not compatible with minimal SSH deployment targets.
-Legacy bucket-root imports are protected from automatic SSH publication.
+The installer creates a non-login `celld-publish` account. The host validates
+bounded prepared files in `/var/lib/celld-ctl/staging`, performs a credential-free
+native dry run, then publishes with exact pinned native celld and root-held
+storage credentials passed only to that process. The staged files are root-owned
+and readable by the publisher group, not mutable by it; no project build tools
+run on the host. Native output and errors are bounded/redacted. Inspect and
+remove abandoned staging directories after a process crash, **not** durable
+object-store data. Legacy bucket-root imports are excluded from automatic
+SSH publication. Use matching client/host 0.2.0 or later.

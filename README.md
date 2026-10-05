@@ -1,14 +1,12 @@
 # celld-ctl
 
-A small Rust control layer for hosting independent [celld](https://celld.dev)
-applications on a Linux VM with systemd, plus the developer CLI `cella`.
-Apps keep their `wrangler.jsonc`; native celld parses and builds them. Each app
-gets its own storage prefix, pinned celld release and loopback service. The
-dedicated-port routing scheme assigns each app a Caddy port (9101–9999) that
-serves the app at `/`, through exe.dev's authenticated alternate-port proxy;
-port 8000 is a directory of slug links to those ports, not an app router.
-The app runtime stays on loopback ports 8101–8999. Fresh x86_64 installs use
-local RustFS storage by default.
+A Rust host control layer and `cella` owner-deployment CLI for independent
+[celld](https://celld.dev) apps on a single Linux/systemd VM. Native celld builds
+existing Wrangler projects. Each app has its own object-store prefix, pinned
+release and loopback runtime (8101–8999). Caddy serves a slug directory on
+port 8000 and each app at `/` on a dedicated port (9101–9999) through exe.dev's
+authenticated alternate-port proxy. Fresh x86_64 hosts default to local RustFS
+for single-node development/testing; external S3-compatible storage is optional.
 
 ## Host
 
@@ -18,32 +16,32 @@ cargo build --release --locked -p celld-ctl
 sudo scripts/install-host.sh
 ```
 
-See [host setup](docs/setup-host.md) for prerequisites and storage options.
+See [host setup](docs/setup-host.md) for prerequisites, external storage and
+existing-host precautions.
 
-## Developer machine
+## Owner's machine
 
 ```sh
 git clone https://github.com/applet-one/celld-ctl.git; cd celld-ctl
 cargo install --locked --path crates/cella --force
-
 export CELLA_HOST=YOUR_VM_SSH_HOST
 export CELLA_SSH_KEY="$HOME/.ssh/YOUR_VM_KEY"
-
 cd /path/to/your/wrangler-project
 cella deploy
 cella status
 cella logs --lines 50
 ```
 
-See [dev-machine setup](docs/setup-cella.md) for SSH prerequisites.
+First [register the owner SSH key and verify the VM host key](docs/cella.md#owner-ssh-setup).
 
 ## Documentation
 
-- [Host setup](docs/setup-host.md) · [Dev-machine setup](docs/setup-cella.md)
-- [Operations, migration and security](docs/operations.md) · [Developer CLI](docs/cella.md)
-- [Architecture](docs/architecture.md) · [Implementation status](docs/implementation-plan.md)
-- [Instance separation](docs/instance-separation.md)
+- [Host setup](docs/setup-host.md) · [Owner CLI and SSH setup](docs/cella.md)
+- [Operations, migration, backup and historical test limits](docs/operations.md)
+- [Architecture and security boundary](docs/architecture.md)
 
-**Repository boundary:** reusable code and generic templates only. Hostnames,
-keys, credentials, registries, generated routes and deployed apps stay outside
-this checkout. Capacity qualification and production durability remain separate.
+**Repository boundary:** reusable code and generic templates only. Use
+placeholders in examples; never commit real hostnames, object-store account IDs,
+keys, secrets, deployed app source, generated routes/configuration, SQLite
+registries or celld state. Keep instance data outside this checkout. Container
+smoke tests are not VM qualification or a production durability guarantee.
