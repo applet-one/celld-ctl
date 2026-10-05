@@ -1,8 +1,11 @@
 # cella: owner SSH deployment
 
 First [install the host](setup-host.md). `cella` is the owner's client; it
-uses the existing exe.dev VM-owner SSH gateway, not a separate deployment
-login, relay or port 2222. Keep your `wrangler.jsonc`/`wrangler.json`.
+uses ordinary owner SSH to a Linux host. On exe.dev this is the existing VM
+SSH gateway; no separate deployment login, relay or port 2222 is required.
+Other hosts need an SSH account that can run
+`sudo -n /usr/local/bin/celld-ctl transport`. Keep your
+`wrangler.jsonc`/`wrangler.json`.
 Host object-store bucket settings and credentials stay on the host; application
 R2 bindings in Wrangler are separate. Client and host must be 0.2.0 or later:
 the old 0.1 client published directly to object storage.
@@ -20,56 +23,67 @@ npm/pnpm/Yarn dependencies including esbuild when bundling requires it.
 
 ## Owner SSH setup
 
-Reuse an exe.dev-registered owner SSH key if available. Otherwise, **on your
-own machine**, choose a new filename if this one exists:
+Use an SSH key authorized for your VM owner account. On a non-exe.dev VM,
+configure that account's normal SSH access using your provider's or host
+operator's procedure. On exe.dev, reuse an account-registered owner key or
+register a new one. To create a new key **on your own machine**, choose a
+different filename if this one exists:
 
 ```sh
 mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
-ssh-keygen -t ed25519 -f "$HOME/.ssh/cella-owner" -C 'exe.dev VM owner'
+ssh-keygen -t ed25519 -f "$HOME/.ssh/cella-owner" -C 'VM owner'
 chmod 600 "$HOME/.ssh/cella-owner"
 ssh-keygen -lf "$HOME/.ssh/cella-owner.pub"
+```
+
+For **exe.dev only**, register its public key with your account:
+
+```sh
 cat "$HOME/.ssh/cella-owner.pub" | ssh exe.dev ssh-key add
 ```
 
 The [exe.dev key command](https://exe.dev/docs/cli-ssh-key.md) requires an
 already-authenticated account for registration; use your account's registration
-flow if that fails. Only submit the `.pub` file, never the private key. Prefer
+flow if that fails. On other hosts, follow their own owner-key enrollment
+process. Only submit the `.pub` file, never the private key. Prefer
 a passphrase and `ssh-add "$HOME/.ssh/cella-owner"` on the **local** agent
 before deploying. Batch SSH cannot prompt for it; alternatively, protect an
 empty-passphrase key carefully. Never share an owner key with CI or untrusted
 users.
 
-Test your actual [exe.dev SSH destination](https://exe.dev/docs/faq/ssh-destination.md)
-on port 22 (placeholders below):
+Test your actual SSH destination (a literal host or `user@host`; not a
+`~/.ssh/config` alias):
 
 ```sh
-ssh -i "$HOME/.ssh/cella-owner" -o IdentitiesOnly=yes YOUR_VM.exe.xyz
-# If necessary, use the gateway form:
-ssh -i "$HOME/.ssh/cella-owner" -o IdentitiesOnly=yes vm+YOUR_VM@vm.exe.xyz
-export CELLA_HOST=YOUR_VM.exe.xyz  # or vm+YOUR_VM@vm.exe.xyz
+ssh -i "$HOME/.ssh/cella-owner" -o IdentitiesOnly=yes OWNER@YOUR_VM_HOST
+export CELLA_HOST=OWNER@YOUR_VM_HOST
 export CELLA_SSH_KEY="$HOME/.ssh/cella-owner"
 ```
+
+On exe.dev, use the [documented VM destination](https://exe.dev/docs/faq/ssh-destination.md):
+`YOUR_VM.exe.xyz`, or `vm+YOUR_VM@vm.exe.xyz` if the direct form fails.
+Set `CELLA_HOST` to the destination that works.
 
 **Verify the VM's SSH host-key fingerprint independently** through trusted VM
 access or the operator before accepting its `known_hosts` entry. The owner
 *.pub* authentication-key fingerprint above is not the VM's server fingerprint.
-The [exe.dev host-key FAQ](https://exe.dev/docs/faq/host-key.md) covers
-`ssh exe.dev`, not necessarily either VM destination. For the direct-hostname
-form you may inspect a scan, but a scan alone cannot authenticate the host:
+For exe.dev, the [account-gateway host-key FAQ](https://exe.dev/docs/faq/host-key.md)
+covers `ssh exe.dev`, not necessarily either VM destination. You may inspect a
+scan of your actual direct VM hostname, but a scan alone cannot authenticate it:
 
 ```sh
-ssh-keyscan -t ed25519 YOUR_VM.exe.xyz > "$HOME/.ssh/cella-vm-key.scan"
+ssh-keyscan -t ed25519 YOUR_VM_HOST > "$HOME/.ssh/cella-vm-key.scan"
 ssh-keygen -lf "$HOME/.ssh/cella-vm-key.scan"
 # Only after an independent fingerprint match:
 cat "$HOME/.ssh/cella-vm-key.scan" >> "$HOME/.ssh/known_hosts"
 chmod 600 "$HOME/.ssh/known_hosts"
 ```
 
-For `vm+YOUR_VM@vm.exe.xyz`, verify the fingerprint presented for **that
-actual destination** against its trusted value; do not reuse a scan from
-`YOUR_VM.exe.xyz`. Investigate key changes, never disable host-key checking.
+Verify the fingerprint presented for **the destination you actually use**;
+do not reuse a scan for a different hostname or provider. Investigate key
+changes; never disable host-key checking.
 `cella` ignores `~/.ssh/config` (`-F /dev/null`), so set the literal working
-`CELLA_HOST` and registered `CELLA_SSH_KEY` (or `--host` and `--identity`).
+`CELLA_HOST` and authorized `CELLA_SSH_KEY` (or `--host` and `--identity`).
 `CELLA_SSH_PORT`/`--ssh-port` defaults to 22. No SSH agent or storage credentials
 are forwarded. On the VM the owner must be able to run
 `sudo -n /usr/local/bin/celld-ctl transport` without a password. `cella` sends
@@ -94,10 +108,12 @@ cella --slug APP_SLUG status
 
 First deploy provisions and activates the app. The Worker name is the default
 slug; `--slug` changes the directory/routing identity, not the native Worker.
-Port 8000 lists active slugs linking to their dedicated Caddy ports (9101–9999)
-via exe.dev's authenticated alternate-port proxy. Each app serves at `/` on its
-port, preserving Wrangler root routes without slug path prefixes. Status and
-deployment history are JSON; logs are bounded journal text (`--lines` 1–1000).
+Port 8000 lists active slugs linking to their dedicated Caddy ports (9101–9999).
+exe.dev forwards these through its authenticated HTTPS proxy; on another VM,
+provide equivalent trusted HTTPS and access control on the same public ports.
+Each app serves at `/` on its port, preserving Wrangler root routes without
+slug path prefixes. Status and deployment history are JSON; logs are bounded
+journal text (`--lines` 1–1000).
 A status request for an unknown slug before first deploy is expected.
 
 `cella` downloads and verifies the host's exact native celld pin, builds locally

@@ -4,8 +4,9 @@ Start with [host setup](setup-host.md); the owner follows [client SSH
 setup](cella.md#owner-ssh-setup). This single-host trusted-owner system has no
 scoped CI/developer deploy identity or runtime app-secret manager. Keep object
 storage, internal listeners and root-only credentials private. The Caddy
-listeners assume exe.dev's authenticated alternate-port HTTPS proxy, not direct
-unauthenticated Internet exposure.
+listeners expect a trusted HTTPS and access-control proxy on matching public
+ports: exe.dev supplies one, but other hosts must configure their own. Do not
+expose Caddy as unauthenticated public HTTP.
 
 ## Historical storage gate (October 5, 2026)
 
@@ -49,18 +50,20 @@ object-store data; clean up retained local cache only after operator review.
 
 ## Owner SSH transport and old-service migration
 
-`cella` uses an exe.dev-registered **owner** key on SSH port 22, strict
-VM host-key checking, `-F /dev/null`, no forwarding/PTY and the fixed command
-`sudo -n /usr/local/bin/celld-ctl transport`. The owner needs non-interactive
+`cella` uses an **owner** SSH key (registered with exe.dev on that platform,
+or authorized for the account on another VM), strict VM host-key checking,
+`-F /dev/null`, no forwarding/PTY and the fixed command
+`sudo -n /usr/local/bin/celld-ctl transport`. SSH defaults to port 22;
+`CELLA_SSH_PORT` permits a different port. The owner needs non-interactive
 sudo for that command. The transport bounds its request and permits only
 provision, target, deploy, status, logs and deployments; it never
 selects a bucket, executable or arbitrary host path. Host credentials are
 root-only. **This does not restrict ordinary owner SSH/sudo**. Never give an
-owner key to CI or untrusted users. Revoke a compromised key via exe.dev's
-account key commands, considering other keys and existing sessions. For
-registration and independently verified VM fingerprints (distinct from owner
-key and `ssh exe.dev` fingerprints), follow [client SSH setup](cella.md#owner-ssh-setup).
-Do not alter the platform-managed primary SSH service.
+owner key to CI or untrusted users. Revoke a compromised key through your
+provider or host account (on exe.dev, use its account key commands), considering
+other keys and sessions. For authorization and independently verified VM
+fingerprints, follow [client SSH setup](cella.md#owner-ssh-setup). Do not alter
+a platform-managed primary SSH service.
 
 For hosts **previously using `cella-sshd` only**: make a
 [backup](#backup-and-recovery), keep an off-host copy, reinstall current host

@@ -5,8 +5,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use std::os::unix::fs::PermissionsExt;
 
-/// exe.dev forwards owner-authenticated alternate ports 3000..=9999. Keep
-/// the public Caddy listener separate from the loopback native listener.
+/// Dedicated public ports fit exe.dev's authenticated 3000..=9999 range.
+/// Other hosts must provide trusted HTTPS/access control for these listeners.
 pub const PUBLIC_PORT_OFFSET: u16 = 1000;
 
 #[derive(Debug, Clone, Serialize)]

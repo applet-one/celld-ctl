@@ -42,7 +42,7 @@ impl Ssh {
         }
         let mut cmd = Command::new("ssh");
         // Ignore user ssh_config: ProxyCommand/LocalCommand/SendEnv must not
-        // replace this gateway connection or forward ambient credentials.
+        // replace this SSH connection or forward ambient credentials.
         cmd.env_clear();
         for key in ["PATH", "HOME", "LANG"] {
             if let Some(value) = std::env::var_os(key) {
