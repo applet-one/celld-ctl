@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use cella::{
-    bundle, config, release, toolchain,
+    bundle, config, init, release, toolchain,
     transport::{Request, Ssh},
 };
 use clap::{Parser, Subcommand};
@@ -12,7 +12,7 @@ use std::process::{Command, Stdio};
 #[derive(Parser)]
 #[command(version, about = "Owner SSH deployments for celld applications")]
 struct Cli {
-    /// Wrangler project directory or configuration file (never rewritten).
+    /// Wrangler project directory or config file; base directory for init.
     #[arg(long, global = true, default_value = ".")]
     project: PathBuf,
     /// Override hosted routing slug, not the native Worker name.
@@ -32,6 +32,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Action {
+    /// Create a starter Worker project; use . to scaffold the current directory.
+    Init {
+        /// New project directory, or . (the folder name becomes the app name).
+        directory: PathBuf,
+    },
     /// Build locally without storage credentials; upload over SSH for host publication.
     Deploy {
         /// Source label; defaults to Git HEAD, suffixed -dirty for local changes.
@@ -107,6 +112,23 @@ struct NativeDeployment {
 
 fn run(cli: Cli) -> Result<i32> {
     match &cli.command {
+        Action::Init { directory } => {
+            let target = init::create(&cli.project, directory)?;
+            println!(
+                "Created {} in {}",
+                target.file_name().unwrap().to_string_lossy(),
+                target.display()
+            );
+            if directory == Path::new(".") {
+                println!("Next: pnpm install && cella deploy");
+            } else {
+                println!(
+                    "Next: cd '{}' && pnpm install && cella deploy",
+                    target.display().to_string().replace('\'', "'\\''")
+                );
+            }
+            Ok(0)
+        }
         Action::Deploy {
             source_revision: explicit_revision,
         } => {

@@ -21,6 +21,29 @@ OpenSSH, `curl` (for exact native downloads), Node.js and your project's
 npm/pnpm/Yarn dependencies including esbuild when bundling requires it.
 `cella` does not run package installs.
 
+## Create a project
+
+```sh
+cella init my-app
+cd my-app
+pnpm install
+# After configuring owner SSH:
+cella deploy
+```
+
+Use `cella init .` to scaffold the current directory using its folder name.
+Names must start with a lowercase letter and contain up to 63 lowercase letters,
+digits or hyphens, ending with a letter or digit. Named directories must not
+already exist; `.` preserves unrelated files and rejects scaffold or Wrangler
+configuration conflicts before writing.
+
+The Applet-style starter includes a SQLite-backed Durable Object counter,
+`wrangler.jsonc`, and a `package.json` with esbuild as a dependency and a
+`deploy` script for Cella. It does not include Applet-only hosting settings.
+Initialization needs no SSH configuration and does not install dependencies.
+You can use npm or Yarn instead of pnpm. `--project DIR` sets the base directory
+for initialization.
+
 ## Owner SSH setup
 
 Use an SSH key authorized for your VM owner account. On a non-exe.dev VM,
