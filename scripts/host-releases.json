@@ -1,0 +1,24 @@
+{
+  "celld": {
+    "version": "0.6.1",
+    "x86_64": {
+      "url": "https://github.com/denoland/celld/releases/download/v0.6.1/celld-x86_64-unknown-linux-gnu.gz",
+      "sha256": "79a8253cff5d4e8a4a9f7a2611e393390f7fe9025f00e88467875b007c44866b"
+    },
+    "aarch64": {
+      "url": "https://github.com/denoland/celld/releases/download/v0.6.1/celld-aarch64-unknown-linux-gnu.gz",
+      "sha256": "ab99053bcced225bb5b54f428792260c905b782b8a61947362a12ce3a9c22def"
+    }
+  },
+  "rustfs": {
+    "version": "1.0.1",
+    "x86_64": {
+      "url": "https://github.com/rustfs/rustfs/releases/download/1.0.1/rustfs-linux-x86_64-musl-v1.0.1.zip",
+      "sha256": "a834096dafa1f1a55825a2cdaf49d006a193978d344f2d508c2be475133738a3"
+    },
+    "aarch64": {
+      "url": "https://github.com/rustfs/rustfs/releases/download/1.0.1/rustfs-linux-aarch64-musl-v1.0.1.zip",
+      "sha256": "d2533e293204597416cb8d30790ea35df14cb4521633fa3574c64333141bafdf"
+    }
+  }
+}
