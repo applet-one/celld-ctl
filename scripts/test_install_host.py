@@ -38,28 +38,37 @@ class Policy(unittest.TestCase):
     def classify(self):
         return i.classify(self.config, self.state, self.node, self.rust)[0]
 
-    def test_default_is_unqualified_external(self):
+    def test_fresh_x86_default_is_local_and_external_is_opt_out(self):
         self.assertEqual(self.classify(), 'fresh')
-        self.assertEqual(i.select(None, 'fresh'), 'external')
-        self.assertEqual(i.select('local', 'fresh'), 'local')
+        self.assertEqual(i.select(None, 'fresh', 'x86_64'), 'local')
+        self.assertEqual(i.select('local', 'fresh', 'x86_64'), 'local')
+        self.assertEqual(i.select('external', 'fresh', 'x86_64'), 'external')
+
+    def test_fresh_arm64_requires_explicit_storage_choice(self):
+        with self.assertRaisesRegex(i.InstallError, 'native arm64 qualification'):
+            i.select(None, 'fresh', 'aarch64')
+        self.assertEqual(i.select('local', 'fresh', 'aarch64'), 'local')
+        self.assertEqual(i.select('external', 'fresh', 'aarch64'), 'external')
 
     def test_external_preservation(self):
         self.put(self.config, json.dumps({'endpoint': 'https://example.com',
                                           'bucket': 's3://existing', 'celld_version': '0.6.1'}))
         self.put(self.node, 'AWS_ACCESS_KEY_ID=xyz\nAWS_SECRET_ACCESS_KEY=operator\n')
         self.assertEqual(self.classify(), 'external')
-        self.assertEqual(i.select(None, 'external'), 'external')
+        self.assertEqual(i.select(None, 'external', 'x86_64'), 'external')
+        self.assertEqual(i.select(None, 'external', 'aarch64'), 'external')
         with self.assertRaises(i.InstallError):
-            i.select('local', 'external')
+            i.select('local', 'external', 'x86_64')
 
     def test_local_reuses_matching_credentials(self):
         self.credentials()
         self.put(self.config, json.dumps(self.local))
         self.put(self.state, json.dumps(self.metadata))
         self.assertEqual(self.classify(), 'local')
-        self.assertEqual(i.select(None, 'local'), 'local')
+        self.assertEqual(i.select(None, 'local', 'x86_64'), 'local')
+        self.assertEqual(i.select(None, 'local', 'aarch64'), 'local')
         with self.assertRaises(i.InstallError):
-            i.select('external', 'local')
+            i.select('external', 'local', 'x86_64')
 
     def test_preparing_recovery_and_contradictions(self):
         self.metadata['phase'] = 'preparing'
@@ -143,7 +152,7 @@ class Policy(unittest.TestCase):
                                    self.root)
         unpack.assert_not_called()
 
-    def test_fake_installer_default_and_explicit_local(self):
+    def test_fake_installer_default_local_and_explicit_external(self):
         # Substitute filesystem, commands and downloads; absolutely no host writes.
         from contextlib import ExitStack
         paths = {'STATE': self.state, 'CONFIG': self.config, 'NODE_ENV': self.node,
@@ -156,23 +165,53 @@ class Policy(unittest.TestCase):
                 stack.enter_context(patch.object(i, key, path))
             stack.enter_context(patch.object(i, 'safe_path'))
             stack.enter_context(patch.object(i, 'occupied', return_value=False))
-            stack.enter_context(patch.object(i, 'verified_release', return_value=None))
+            releases = stack.enter_context(patch.object(i, 'verified_release', return_value=None))
             components = stack.enter_context(patch.object(i, 'install_components'))
             local = stack.enter_context(patch.object(i, 'local_install'))
             caddy = stack.enter_context(patch.object(i, 'init_caddy'))
             commands = stack.enter_context(patch.object(i, 'run', return_value=Mock(returncode=1)))
             i.install(None)
             components.assert_called_once()
-            local.assert_not_called()
+            local.assert_called_once()
+            self.assertEqual(local.call_args.args[0], 'fresh')
+            self.assertEqual([call.args[1] for call in releases.call_args_list],
+                             ['celld', 'rustfs'])
             caddy.assert_called_once()
+            self.assertFalse(any(call.args[:3] == ('systemctl', 'reload', 'cella-sshd')
+                                 for call in commands.call_args_list))
+            self.assertTrue(any(call.args[:4] == ('systemctl', 'is-active', '--quiet', 'cella-sshd')
+                                for call in commands.call_args_list))
             commands.reset_mock()
             local.reset_mock()
             components.reset_mock()
-            i.install('local')
-            local.assert_called_once()
-            self.assertEqual(local.call_args.args[0], 'fresh')
-            self.assertTrue(any(call.args[:3] == ('systemctl', 'is-active', '--quiet')
-                                for call in commands.call_args_list) is False)
+            releases.reset_mock()
+            i.install('external')
+            local.assert_not_called()
+            components.assert_called_once()
+            self.assertEqual([call.args[1] for call in releases.call_args_list],
+                             ['celld'])
+            self.assertFalse(any(call.args[:3] == ('systemctl', 'is-active', '--quiet')
+                                 and call.args[3] == 'rustfs'
+                                 for call in commands.call_args_list))
+            self.assertFalse(any(call.args[:3] == ('systemctl', 'reload', 'cella-sshd')
+                                 for call in commands.call_args_list))
+
+    def test_existing_external_reinstall_restarts_deploy_ssh_without_hup(self):
+        self.put(self.config, json.dumps({'endpoint': 'https://example.com',
+                                          'bucket': 's3://existing', 'celld_version': '0.6.1'}))
+        self.put(self.node, 'AWS_ACCESS_KEY_ID=xyz\nAWS_SECRET_ACCESS_KEY=operator\n')
+        def fake_run(*args, **_kwargs):
+            return Mock(returncode=1 if args[:3] == ('getent', 'passwd', 'rustfs') else 0)
+        with patch.object(i, 'STATE', self.state), patch.object(i, 'CONFIG', self.config), \
+             patch.object(i, 'NODE_ENV', self.node), patch.object(i, 'RUSTFS_ENV', self.rust), \
+             patch.object(i, 'safe_path'), patch.object(i, 'verified_release', return_value=None), \
+             patch.object(i, 'install_components'), patch.object(i, 'run',
+                                                                  side_effect=fake_run) as commands:
+            i.install(None)
+        self.assertTrue(any(call.args[:3] == ('systemctl', 'restart', 'cella-sshd')
+                            for call in commands.call_args_list))
+        self.assertFalse(any(call.args[:3] == ('systemctl', 'reload', 'cella-sshd')
+                             for call in commands.call_args_list))
 
     def test_fake_installer_rejects_conflicting_port_before_install(self):
         self.put(self.config, json.dumps(self.local))

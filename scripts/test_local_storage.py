@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import socket
 import stat
 import subprocess
@@ -56,7 +57,12 @@ def check_loopback_only():
 
 
 def smoke():
-    subprocess.run([str(REPO / 'scripts/install-host.sh'), '--storage', 'local'], check=True)
+    # Exercise the no-flag default on the qualified architecture; arm64 still
+    # requires an explicit selection until it receives native qualification.
+    install = [str(REPO / 'scripts/install-host.sh')]
+    if platform.machine() != 'x86_64':
+        install += ['--storage', 'local']
+    subprocess.run(install, check=True)
     for p in (CONFIG, NODE_ENV, RUSTFS_ENV, STATE):
         safe_path(p, secret=True)
         if not p.is_file():
@@ -70,12 +76,13 @@ def smoke():
         raise InstallError('RustFS data permissions are not private')
     check_loopback_only()
     original = fingerprint()
-    subprocess.run([str(REPO / 'scripts/install-host.sh'), '--storage', 'local'], check=True)
+    subprocess.run(install, check=True)
     if fingerprint() != original:
         raise InstallError('Reinstall changed credential identity')
     check_loopback_only()
     print('Disposable-host smoke passed: storage install, loopback bind, credential reuse.')
-    print('NOT TESTED: native celld diagnose/deploy, conditional writes, durability, restart/cache restore, cold snapshot, arm64. Do not enable local default on this evidence.')
+    print('Installer ran native celld diagnose and strict durability readback.')
+    print('NOT TESTED by this harness: real deploy, named-object persistence, cache-free recovery, cold snapshot, VM reboot, native arm64. Run the separate deploy smoke before claiming those properties.')
 
 
 def main():

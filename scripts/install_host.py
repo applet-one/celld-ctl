@@ -165,10 +165,16 @@ def classify(config, state, node, rustfs):
     return 'external', cfg
 
 
-def select(mode, existing):
+def select(mode, existing, arch):
     if existing == 'fresh':
-        # Local default is blocked pending the disposable-host compatibility gate.
-        return mode or 'external'
+        if mode is not None:
+            return mode
+        # The release smoke exercised the full installer and cache-free DO
+        # recovery on x86_64. Do not silently claim that evidence for arm64.
+        require(arch == 'x86_64',
+                'Fresh arm64 hosts need --storage local or --storage external '
+                'until native arm64 qualification is recorded')
+        return 'local'
     if existing == 'local':
         require(mode in (None, 'local'), 'Refusing implicit local-to-external migration')
         return 'local'
@@ -323,7 +329,7 @@ def install(requested):
                   owner=__import__('pwd').getpwnam('rustfs').pw_uid if p == RUSTFS_DATA
                   and shutil.which('getent') and run('getent', 'passwd', 'rustfs', stdout=subprocess.DEVNULL, check=False).returncode == 0 else 0)
     existing, info = classify(CONFIG, STATE, NODE_ENV, RUSTFS_ENV)
-    mode = select(requested, existing)
+    mode = select(requested, existing, platform.machine())
     if existing == 'fresh':
         require(not is_present(REGISTRY),
                 'Existing registry without host storage configuration; manual recovery required')
@@ -365,12 +371,17 @@ def install(requested):
         if mode == 'local':
             local_install(existing, rustfs_source, rustfs_path)
         elif existing == 'fresh':
-            print('Storage is NOT ready: configure an external HTTPS bucket and root-only host credentials. Local RustFS requires explicit --storage local until compatibility qualification.')
+            print('External storage is NOT ready: configure an HTTPS bucket and root-only host credentials.')
         if existing == 'fresh':
             init_caddy()
         run('systemctl', 'daemon-reload')
         run('systemctl', 'enable', '--now', 'cella-sshd')
-        run('systemctl', 'reload', 'cella-sshd')
+        # HUP immediately after a fresh sshd start can cause it to exit cleanly
+        # after systemctl has reported a successful reload. On a reinstall the
+        # unit/config might have changed, so restart rather than racing a HUP.
+        if existing != 'fresh':
+            run('systemctl', 'restart', 'cella-sshd')
+        run('systemctl', 'is-active', '--quiet', 'cella-sshd')
     print('Deployment SSH listens at 127.0.0.1:2222. Arrange private access and enroll public deploy keys.')
 
 
