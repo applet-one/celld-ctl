@@ -30,18 +30,39 @@ On your laptop/workstation or CI runner—not on the host VM.
 
 ### SSH access
 
-Generate a dedicated deploy key on your dev machine ([instructions](docs/setup-cella.md#b2-generate-a-dedicated-deployment-key)).
-Send only the `.pub` file to the host operator, who runs these commands **on the VM**
-(replace the example path):
+Use your existing administrator SSH access to enroll a separate deployment key.
+Complete host setup first; replace `admin@vm` with your usual SSH destination.
+
+**1. Create a key on your dev machine.** Choose another filename if it already exists.
 
 ```sh
-sudo celld-deploy-key add developer-laptop /path/to/cella-deploy.pub --kind owner
+ssh-keygen -t ed25519 -f ~/.ssh/cella-deploy -N '' -C 'cella developer laptop'
+```
+
+Keep the private key on your dev machine. The empty passphrase is required by
+`cella`'s current batch SSH transport.
+
+**2. Copy only the public key using your existing SSH access.**
+
+```sh
+scp ~/.ssh/cella-deploy.pub admin@vm:~/cella-deploy.pub
+```
+
+**3. Log in to the VM and enroll the key.**
+
+```sh
+ssh admin@vm
+sudo celld-deploy-key add developer-laptop "$HOME/cella-deploy.pub" --kind owner
 sudo ssh-keygen -lf /etc/celld-ctl/ssh-host-ed25519-key.pub
 ```
 
-The operator provides the private deployment hostname, port `2222`, username
-`cella-deploy`, server fingerprint and application URL. Keep your private deploy
-key on your dev machine or in your CI secret store.
+The last command prints the deployment server's fingerprint; save it for
+verification on your dev machine. Use your administrator account for these
+steps, not the restricted `cella-deploy` account.
+
+Key enrollment grants access but does not set up connectivity. Obtain the private
+deployment hostname, port `2222`, username `cella-deploy` and application URL from
+the host operator. See [Dev-machine setup](docs/setup-cella.md) for details.
 
 ### cella
 
