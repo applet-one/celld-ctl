@@ -125,10 +125,14 @@ cella deployments list
 
 The first deploy provisions the app automatically. The host publishes using
 host-only credentials; `cella` builds and uploads a bounded prepared package.
-Your Wrangler file is not rewritten. The Worker name becomes `/name/` at the
-operator's app URL; `--slug` overrides the routing slug. Caddy keeps that
-prefix, so account for it in your app's router. The transport runs `sudo -n /usr/local/bin/celld-ctl transport` through the
-owner login, requiring non-interactive sudo access. Ordinary owner `ssh` may grant
+Your Wrangler file is not rewritten. The Worker name becomes the directory
+slug; `--slug` overrides that slug, not the native Worker name. In the
+dedicated-port scheme, the directory at port 8000 links to each app's own
+Caddy port (9101–9999) via exe.dev's authenticated alternate-port proxy.
+The app serves at `/` there; no slug path prefix is passed to its router and
+existing Wrangler/root routes remain unchanged. The transport runs
+`sudo -n /usr/local/bin/celld-ctl transport` through the owner login, requiring
+non-interactive sudo access. Ordinary owner `ssh` may grant
 a full shell: `cella` requests only the fixed transport command, but the SSH
 identity is **not** restricted to deploying. Do not distribute it to CI or
 untrusted users.

@@ -206,6 +206,9 @@ impl<R: Runtime> Manager<R> {
                     && ![a.port, a.internal_port].contains(&internal)
             }) && self.runtime.port_free(port)
                 && self.runtime.port_free(internal)
+                && self
+                    .runtime
+                    .port_free(port + crate::registry::PUBLIC_PORT_OFFSET)
             {
                 ports = Some((port, internal));
                 break;
@@ -253,7 +256,9 @@ impl<R: Runtime> Manager<R> {
         ensure!(
             apps.iter()
                 .all(|a| ![a.port, a.internal_port].contains(&8100)
-                    && ![a.port, a.internal_port].contains(&18100)),
+                    && ![a.port, a.internal_port].contains(&18100)
+                    && a.public_port() != 9100)
+                && self.runtime.port_free(9100),
             "legacy ports already allocated"
         );
         let app = App {
@@ -416,7 +421,7 @@ impl<R: Runtime> Manager<R> {
             let _ = self.write_status();
             return Err(e);
         }
-        Ok(json!({"slug":slug,"version_id":version,"enabled":true}))
+        Ok(json!({"slug":slug,"version_id":version,"enabled":true,"public_port":app.public_port()}))
     }
     pub fn lifecycle(&mut self, operation: &str, slug: &str) -> Result<Value> {
         Self::check_slug(slug)?;
@@ -473,7 +478,7 @@ impl<R: Runtime> Manager<R> {
             None
         };
         Ok(
-            json!({"target":app.target,"active":active,"version_id":app.version_id,"observed_version_id":observed,"unit":app.unit,"port":app.port,"internal_port":app.internal_port}),
+            json!({"target":app.target,"active":active,"version_id":app.version_id,"observed_version_id":observed,"unit":app.unit,"port":app.port,"internal_port":app.internal_port,"public_port":app.public_port()}),
         )
     }
     /// Online SQLite backup API gives a consistent snapshot; credentials never enter SQLite.

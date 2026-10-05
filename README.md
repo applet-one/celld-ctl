@@ -3,8 +3,12 @@
 A small Rust control layer for hosting independent [celld](https://celld.dev)
 applications on a Linux VM with systemd, plus the developer CLI `cella`.
 Apps keep their `wrangler.jsonc`; native celld parses and builds them. Each app
-gets its own storage prefix, pinned celld release, loopback service and `/SLUG/`
-route. Fresh x86_64 installs use local RustFS storage by default.
+gets its own storage prefix, pinned celld release and loopback service. The
+dedicated-port routing scheme assigns each app a Caddy port (9101–9999) that
+serves the app at `/`, through exe.dev's authenticated alternate-port proxy;
+port 8000 is a directory of slug links to those ports, not an app router.
+The app runtime stays on loopback ports 8101–8999. Fresh x86_64 installs use
+local RustFS storage by default.
 
 ## Host
 

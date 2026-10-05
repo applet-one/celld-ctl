@@ -17,7 +17,9 @@ cella deploy -> local native dry-run/esbuild
                                                     | pointer/readiness verification
                                                     +-> activate/reload + history
 
-HTTPS proxy -> Caddy :8000 -> /app/* -> celld-cell@app.service (127.0.0.1:PORT)
+exe.dev authenticated HTTPS proxy -> Caddy :8000 / (slug directory)
+                                  -> Caddy :9101..9999 / (one port per app)
+                                     -> celld-cell@SLUG.service (127.0.0.1:8101..8999)
 ```
 
 VM owners configure their existing exe.dev SSH gateway destination and
@@ -29,9 +31,15 @@ celld without user build tools. User Wrangler files stay unchanged. Native celld
 remains the compatibility and durable-publication authority.
 
 Every independently coded app gets a distinct celld fleet prefix such as
-`s3://BUCKET/cells/app` and its own local celld process. Caddy preserves the full
-path: `/app/foo` reaches the app as `/app/foo`. No celld internal listener is
-public. The directory at `/` is read-only, not a management interface.
+`s3://BUCKET/cells/app` and its own local celld process. Its runtime serves on
+`127.0.0.1:8101..8999`; Caddy forwards the corresponding external port,
+runtime port + 1000 (9101–9999), without adding or stripping an app path
+prefix. Thus `/foo` at the app's port reaches the Worker as `/foo`, and
+Wrangler/root routes need no changes. The read-only directory at Caddy port
+8000 links each active slug to its matching app port; it does not proxy
+per-app paths. exe.dev's authenticated alternate-port proxy is the public entry
+point, not a direct unauthenticated app listener. No celld internal listener
+is public.
 
 The local backend shares one RustFS process and bucket across apps;
 prefixes, not storage processes, separate fleets. Local RustFS is single-node

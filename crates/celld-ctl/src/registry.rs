@@ -5,6 +5,10 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use std::os::unix::fs::PermissionsExt;
 
+/// exe.dev forwards owner-authenticated alternate ports 3000..=9999. Keep
+/// the public Caddy listener separate from the loopback native listener.
+pub const PUBLIC_PORT_OFFSET: u16 = 1000;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct App {
     #[serde(flatten)]
@@ -16,6 +20,10 @@ pub struct App {
     pub version_id: Option<String>,
 }
 impl App {
+    pub fn public_port(&self) -> u16 {
+        // validate() requires port <= 8999; registry callers validate rows.
+        self.port + PUBLIC_PORT_OFFSET
+    }
     pub fn validate(&self) -> Result<()> {
         ensure!(
             celld_ctl_core::valid_slug(&self.target.slug)
@@ -30,11 +38,12 @@ impl App {
             "invalid registry unit"
         );
         ensure!(
-            self.port > 1024
+            (3000..=8999).contains(&self.port)
                 && self.internal_port > 1024
                 && self.port != self.internal_port
                 && self.port != 8000
-                && self.internal_port != 8000,
+                && self.internal_port != 8000
+                && self.internal_port != self.public_port(),
             "invalid registry ports"
         );
         Ok(())

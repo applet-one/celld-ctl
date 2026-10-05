@@ -54,10 +54,15 @@ serving. Developers and CI do not need storage credentials or bucket settings.
 Remote transport targets contain only the slug, exact native version and
 enabled flag; the root operator can still inspect full registry targets.
 
-Celld and internal/operator listeners bind to loopback. Only Caddy binds to
-`:8000`; keep the upstream HTTPS proxy private. Incoming forwarded host/proto
-headers are trusted **only** because this host is behind that trusted proxy.
-Do not expose this configuration as a direct public HTTP server.
+Celld and internal/operator listeners bind to loopback. App runtime ports are
+8101–8999; each app's Caddy listener uses runtime port + 1000 (9101–9999)
+and serves that app at `/`, preserving request paths without a slug prefix.
+Caddy also serves the read-only slug directory at `:8000`, with links to the
+matching app ports. Access the app listeners through exe.dev's authenticated
+alternate-port proxy. Keep the upstream HTTPS proxy private: forwarded
+host/proto headers are trusted **only** because this host is behind that trusted
+proxy. Do not expose these Caddy listeners as unauthenticated direct public
+HTTP servers.
 
 On a **new** host with no existing port-8000 workload, initialize Caddy if the
 installer has not already done so:
@@ -70,9 +75,10 @@ sudo systemctl reload caddy
 ```
 
 Do not overwrite an existing application's proxy configuration blindly. For a
-legacy counter, complete its migration first and let `import-counter --enabled`
-render the route. Route publication needs Caddy's private admin listener running
-at `127.0.0.1:2019`; it is not an external management endpoint.
+legacy counter, complete its migration first and account for its special 8100
+runtime / 9100 Caddy port pair, outside the standard 8101–8999 / 9101–9999
+range. Route publication needs Caddy's private admin
+listener running at `127.0.0.1:2019`; it is not an external management endpoint.
 
 ## Application lifecycle
 
@@ -91,16 +97,21 @@ sudo celld-ctl disable APP_SLUG
 Registry state is `/var/lib/celld-ctl/registry.sqlite`; app environment files live
 in `/etc/celld/cells`, and app caches in `/var/lib/celld/APP_SLUG`. Never put these
 paths inside this repository. Ports are transactionally allocated in SQLite;
-they are not hashes of app names. The internal port range must be disjoint from
-the serving range and must never be published.
+they are not hashes of app names. The allocated loopback runtime port
+(8101–8999) determines the dedicated Caddy port by adding 1000; the directory
+slug is not itself a port number. The internal celld port range must be
+disjoint from the serving range and must never be published.
 
 Enable/activation verifies the durable deployment pointer, starts the pinned
-service and checks its private deployment state before publishing a route.
-Routes preserve `/APP_SLUG/` (no prefix stripping); `/APP_SLUG` redirects to it.
-The root page is a generated, read-only directory, not live monitoring. Use
+service and checks its private deployment state before publishing its dedicated
+Caddy app listener. The app's port serves `/` and forwards every request path
+unchanged to that app's loopback runtime. There is no app-path route or
+redirect on the directory port 8000. Its `/` page is a generated,
+read-only slug directory linking to matching app ports, not live monitoring.
+Wrangler and app root routes stay unchanged. Use
 `status` to inspect the actual process and deployed version.
 
-`disable` unpublishes the route and stops/disables its unit. Stop/start and
+`disable` unpublishes the app listener/link and stops/disables its unit. Stop/start and
 restart are operator actions, not available to deploy keys. Removal must never
 delete durable object-store data; retained local state should be archived or
 removed deliberately by the operator, not a remote developer.
@@ -182,8 +193,13 @@ root-only environment and local state. Gracefully stop the service, copy its
 cache to `/var/lib/celld/counter`, give the service account ownership, and point
 `CELLD_WATCH` at that path. Keep credentials root-owned and readable only via
 systemd's EnvironmentFile. Start the same celld version with serving/internal
-listeners `127.0.0.1:8100` / `127.0.0.1:18100`, and proxy `/counter/*` through
-Caddy. Import its existing native version ID with `import-counter`.
+listeners `127.0.0.1:8100` / `127.0.0.1:18100` only as the legacy starting
+point. Port 8100 falls outside the new 8101–8999 app range. For this special
+import alone, its dedicated Caddy listener is **9100**, not a standard
+new-app port; check that it is available before enabling the import. Do not
+retain the former path-based route. Import its existing native version ID with
+`import-counter`; verify the resulting listener and directory link before
+declaring the migration done.
 
 Check a known named Durable Object before and after restart; a successful HTTP
 response alone does not prove persistence. Keep backups outside the repository.
@@ -259,7 +275,11 @@ apps while measuring cgroup memory, request latency and CPU. Increase capacity
 only after inspection; add a second host before sustained memory/CPU saturation.
 Rust/Wasm developer toolchains and runtime app-secret management remain deferred.
 
-Use `scripts/load-test.py` against already deployed **disposable** apps:
+Use `scripts/load-test.py` against already deployed **disposable** apps.
+With its dedicated-port update, `--base-url` identifies the trusted directory
+origin on 8000 and `--slugs` identifies deployed apps; requests target
+each slug's matching dedicated Caddy port at `/`, rather than app paths on
+8000:
 
 ```sh
 python3 scripts/load-test.py --base-url http://127.0.0.1:8000 \

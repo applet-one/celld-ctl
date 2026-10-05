@@ -134,7 +134,9 @@ sudoedit /etc/celld-ctl/config.json
 
 Replace `BUCKET` and `OBJECT_STORE_ENDPOINT`, set the storage region, and ensure
 `celld_version` matches A2. The host allocates each new app its own `cells/SLUG`
-prefix and loopback ports; developers never specify these settings.
+storage prefix and loopback runtime port in 8101–8999; its Caddy app port is
+the runtime port plus 1000 (9101–9999). Developers never specify these
+settings.
 
 Create/edit the private credential file **on this host**:
 
@@ -160,7 +162,10 @@ host-owned credentials support native publication and durable runtime storage.
 ## A4. Initialize the application proxy
 
 **Only on a fresh host with no existing port-8000 workload, if the installer
-has not already initialized Caddy:**
+has not already initialized Caddy:** Before enabling app ports, confirm the
+intended 9101–9999 range is available through the exe.dev authenticated
+alternate-port proxy. Do not replace an existing host's Caddy configuration
+blindly.
 
 ```sh
 sudo install -o root -g root -m 644 examples/caddy/Caddyfile.initial /etc/caddy/Caddyfile
@@ -169,10 +174,15 @@ sudo systemctl enable --now caddy
 sudo systemctl reload caddy
 ```
 
-Caddy owns port 8000; its admin listener stays on loopback port 2019. Keep the
-upstream HTTPS proxy private. This configuration trusts that proxy's forwarded
-headers; it is not a standalone public HTTPS installation. App routes and the
-read-only directory are generated when the manager publishes routes.
+Caddy serves the read-only slug directory at port 8000, linking active apps to
+their matching dedicated ports 9101–9999. Each such port forwards `/` and
+other paths unchanged to one app's loopback runtime port (8101–8999), with no
+per-app path prefix. Caddy's admin listener stays on loopback port 2019.
+Keep the upstream HTTPS proxy private: app access uses exe.dev's authenticated
+alternate-port proxy, not direct unauthenticated HTTP exposure. This
+configuration trusts that proxy's forwarded headers; it is not a standalone
+public HTTPS installation. App listeners and the directory are generated when
+the manager publishes routes.
 
 ## A5. Use existing exe.dev owner SSH
 
@@ -183,9 +193,10 @@ works normally; if not, exe.dev documents the fallback
 account only if needed: `cat ~/.ssh/cella-owner.pub | ssh exe.dev ssh-key add`
 (run from a machine already authenticated to that account). See
 [B2–B4](setup-cella.md#b2-register-the-owners-public-key-with-exedev).
-There is no new port to expose: `cella` uses port **22** and the owner
-identity, not the app's HTTPS endpoint. No independently scoped developer or CI
-role is offered by this workflow. Never give your VM-owner credential to CI or
+`cella` still uses SSH port **22** and the owner identity, not the app's HTTPS
+endpoint. Dedicated app ports are reached through the authenticated exe.dev
+proxy, not by exposing celld or a second SSH listener. No independently scoped
+developer or CI role is offered by this workflow. Never give your VM-owner credential to CI or
 untrusted users. Do not add or configure a second sshd, Tailscale or a relay.
 
 ## A6. Confirm host owner access and identity
@@ -218,8 +229,11 @@ sudo ss -ltnp
 sudo systemctl is-active rustfs.service
 ```
 
-Confirm the pinned binary and root-only storage configuration exist; Caddy owns
-8000, and the exe.dev owner SSH gateway reaches the VM from
+Confirm the pinned binary and root-only storage configuration exist; Caddy
+serves the directory on 8000 and, after app activation, one matching
+9101–9999 listener per app. App runtime ports 8101–8999 and internal ports
+remain loopback-only. Confirm the exe.dev proxy provides authenticated
+alternate-port access and the owner SSH gateway reaches the VM from
 the owner's dev machine. An empty app registry is normal before the first deploy.
 No manual `create`/`enable` is needed: `cella deploy` provisions and activates it.
 For local storage, verify the S3 listener is loopback-only on port 9000 and

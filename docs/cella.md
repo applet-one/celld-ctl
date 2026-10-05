@@ -66,13 +66,14 @@ From your existing Wrangler project:
 ```sh
 cella deploy
 cella --project ./my-project deploy
-cella --slug alternate-route deploy
+cella --slug alternate-slug deploy
 cella deploy --source-revision COMMIT_SHA  # explicit source label
 ```
 
 1. Extract the Worker name as the hosted slug (or use `--slug`) and ask the
    host to provision it. The host returns its exact native celld pin, not storage
-   configuration. Invalid builds may leave a disabled allocation, never a route.
+   configuration. Invalid builds may leave a disabled allocation, never a
+   published app port.
 2. Download/cache and verify that exact native release. Run native `celld deploy
    --dry-run --json` locally, with local esbuild and a fixed dummy bucket argument.
    No object-store client is created in this dry run; storage environment variables
@@ -96,9 +97,14 @@ Only the host has storage credentials. Existing local AWS settings are neither
 needed nor sent to it. Bucket allocation and credentials remain operator state.
 Native publish JSON is printed on stdout; build/publish progress is stderr.
 
-`--slug` changes routing identity only; it does not rename the native Worker.
-Caddy preserves the full `/SLUG/` path. Initial support is JavaScript/TypeScript,
-asset-only Workers, prebundled `no_bundle` projects and standard WASM modules.
+`--slug` changes the directory/routing identity only; it does not rename the
+native Worker. Under the dedicated-port scheme, the slug links from the
+port-8000 directory to that app's Caddy port (9101–9999) via exe.dev's
+authenticated alternate-port proxy. Caddy serves the app at `/` on that port
+and forwards paths unchanged to its loopback runtime (8101–8999); there is no
+per-app path prefix and no change to Wrangler/root routes. Initial support is
+JavaScript/TypeScript, asset-only Workers, prebundled `no_bundle` projects
+and standard WASM modules.
 Container/Python builds and nonstandard copied module extensions are rejected
 rather than executing user build tools on the host. Legacy bucket-root imports
 are protected from this automated publishing path; updates need an operator.

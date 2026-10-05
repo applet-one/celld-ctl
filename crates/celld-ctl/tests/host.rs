@@ -198,6 +198,27 @@ fn storage_origin_policy_is_identical_for_config_and_registry() {
 }
 
 #[test]
+fn dedicated_port_range_rejects_proxy_collisions_and_unsupported_ports() {
+    let f = Fixture::new();
+    let mut config = Config::load(&f.paths).unwrap();
+    config.port_end = 9000;
+    assert!(config.validate().is_err());
+    config.port_start = 7000;
+    config.port_end = 7999;
+    assert!(config.validate().is_err()); // :8000 is the directory
+    config.port_start = 7001;
+    config.port_end = 7999;
+    config.validate().unwrap();
+    config.port_end = 8100;
+    assert!(config.validate().is_err()); // overlaps native ports
+    config.port_start = 8101;
+    config.port_end = 8999;
+    config.internal_port_start = 9001;
+    config.internal_port_end = 9999;
+    assert!(config.validate().is_err()); // overlaps dedicated ports
+}
+
+#[test]
 fn local_only_unit_depends_on_rustfs() {
     let f = Fixture::new();
     let mut m = f.manager();
@@ -221,6 +242,7 @@ fn provision_is_disabled_and_never_contacts_fleet_or_starts() {
     assert!(!f.paths.caddy.exists());
     let app = m.registry.get("123-app").unwrap();
     assert_eq!((app.port, app.internal_port), (8101, 18101));
+    assert_eq!(app.public_port(), 9101);
     let env = fs::read_to_string(f.paths.cells.join("123-app.env")).unwrap();
     assert!(!env.contains("EXAMPLESECRET"));
     assert!(env.contains("CELLD_BIN="));
@@ -243,7 +265,7 @@ fn provision_is_disabled_and_never_contacts_fleet_or_starts() {
 fn allocation_avoids_bound_and_registered_ports() {
     let f = Fixture::new();
     let mut m = f.manager();
-    m.runtime.blocked.insert(8101);
+    m.runtime.blocked.insert(9101);
     m.provision("one").unwrap();
     m.provision("two").unwrap();
     assert_eq!(m.registry.get("one").unwrap().port, 8102);
@@ -275,7 +297,7 @@ fn activation_records_revision_only_after_readiness_and_routes() {
         .rposition(|s| s == "reload-caddy")
         .unwrap();
     assert!(ready < publish);
-    assert!(m.runtime.loaded.contains("handle /app/*"));
+    assert!(m.runtime.loaded.contains(":9101 {"));
     assert!(!m.runtime.loaded.contains("handle_path"));
     assert!(!m.runtime.loaded.contains("18101"));
     assert!(m
@@ -294,7 +316,7 @@ fn readiness_failure_leaves_first_deployment_unpublished_and_disabled() {
     assert!(m.activate("app", Some("abc"), None, false).is_err());
     assert!(!m.registry.get("app").unwrap().target.enabled);
     assert!(m.registry.history("app").unwrap().is_empty());
-    assert!(!m.runtime.loaded.contains("handle /app/*"));
+    assert!(!m.runtime.loaded.contains(":9101 {"));
     assert!(m
         .runtime
         .calls
@@ -310,7 +332,7 @@ fn update_withdraws_route_before_native_reload_and_failure_keeps_it_closed() {
     m.runtime.fail_native = true;
     assert!(m.activate("app", Some("new"), None, false).is_err());
     assert!(!m.registry.get("app").unwrap().target.enabled);
-    assert!(!m.runtime.loaded.contains("handle /app/*"));
+    assert!(!m.runtime.loaded.contains(":9101 {"));
     let withdraw = m
         .runtime
         .calls
@@ -375,7 +397,7 @@ fn postpublication_audit_failure_withdraws_route() {
     m.registry.conn.execute_batch("CREATE TRIGGER reject_activation BEFORE INSERT ON audit WHEN NEW.operation='activate' BEGIN SELECT RAISE(ABORT,'test failure'); END;").unwrap();
     assert!(m.activate("app", None, None, false).is_err());
     assert!(!m.registry.get("app").unwrap().target.enabled);
-    assert!(!m.runtime.loaded.contains("handle /app/*"));
+    assert!(!m.runtime.loaded.contains(":9101 {"));
 }
 #[test]
 fn disable_and_remove_never_delete_durable_or_local_state() {
@@ -385,7 +407,7 @@ fn disable_and_remove_never_delete_durable_or_local_state() {
     fs::create_dir_all(&local).unwrap();
     fs::write(local.join("cache"), "keep").unwrap();
     m.lifecycle("disable", "app").unwrap();
-    assert!(!m.runtime.loaded.contains("handle /app/*"));
+    assert!(!m.runtime.loaded.contains(":9101 {"));
     m.lifecycle("remove", "app").unwrap();
     assert!(m.registry.find("app").unwrap().is_none());
     assert_eq!(fs::read_to_string(local.join("cache")).unwrap(), "keep");
@@ -561,7 +583,8 @@ fn html_escapes_values_and_never_exposes_internal_targets() {
     app.version_id = Some("<script>alert(1)</script>".into());
     let text = render::html(&[app]);
     assert!(text.contains("&lt;script&gt;"));
-    assert!(!text.contains("<script>"));
+    assert!(!text.contains("<script>alert(1)</script>"));
+    assert!(text.contains("<th>Port</th>"));
     assert!(!text.contains("18101"));
     assert!(!text.contains("storage.example.invalid"));
 }
@@ -681,10 +704,15 @@ fn atomic_public_modes_survive_private_umask() {
 #[test]
 fn caddy_forwarded_host_fallback_preserves_the_incoming_port() {
     let f = Fixture::new();
-    let rendered = render::caddy(&[], &f.paths);
+    let m = activated(&f, "app");
+    let rendered = render::caddy(&m.registry.list().unwrap(), &f.paths);
     assert!(rendered.contains("\"\" {http.request.hostport}"));
     assert!(!rendered.contains("{http.request.host}"));
     assert!(rendered.contains("default {http.request.header.X-Forwarded-Host}"));
+    assert!(rendered.contains(":9101 {\n"));
+    assert!(rendered.contains("reverse_proxy 127.0.0.1:8101"));
+    assert!(!rendered.contains("handle /app/*"));
+    assert!(render::html(&m.registry.list().unwrap()).contains("data-port=\"9101\""));
 }
 
 #[test]
@@ -692,13 +720,13 @@ fn disable_reconciles_a_live_route_left_by_a_crash_after_sql_was_disabled() {
     let f = Fixture::new();
     let mut m = activated(&f, "app");
     m.registry.enabled("app", false).unwrap();
-    assert!(m.runtime.loaded.contains("handle /app/*"));
+    assert!(m.runtime.loaded.contains(":9101 {"));
     m.runtime.calls.clear();
     m.lifecycle("disable", "app").unwrap();
-    assert!(!m.runtime.loaded.contains("handle /app/*"));
+    assert!(!m.runtime.loaded.contains(":9101 {"));
     assert!(!fs::read_to_string(&f.paths.caddy)
         .unwrap()
-        .contains("handle /app/*"));
+        .contains(":9101 {"));
     assert!(!m.registry.get("app").unwrap().target.enabled);
     let reload = m
         .runtime

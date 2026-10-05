@@ -2,9 +2,12 @@
 
 ## Host layer
 
-1. Install Caddy as the public listener.
-2. Run each fleet as a loopback-only systemd service.
-3. Keep host registry, credentials, generated routes, and celld state outside this source tree.
+1. Put Caddy behind exe.dev's authenticated alternate-port proxy: port 8000
+   serves the slug directory, and dedicated Caddy ports 9101–9999 serve apps
+   at `/` without path prefixes.
+2. Run each fleet as a loopback-only systemd service on 8101–8999; map its
+   allocated runtime port to external Caddy port +1000.
+3. Keep host registry, credentials, generated listeners, and celld state outside this source tree.
 
 ## `celld-ctl`
 
@@ -57,6 +60,8 @@ units and bounded journal retention. Deployments reuse the existing exe.dev
 VM-owner SSH gateway and owner sudo; no second SSH daemon or managed deploy
 keys are installed. Native deployment, reload and durable-state
 restart behavior have been exercised against a real object store.
+Dedicated per-app port routing replaces the former path-based public routes.
+Previous native/storage smoke results are not validation of the new routing.
 
 As of October 5, 2026, the **fresh x86_64** no-flag installer selects local
 RustFS for single-node development/testing; `--storage external` opts out.
