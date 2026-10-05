@@ -6,9 +6,10 @@ Developers keep their apps defined in `wrangler.jsonc` and use the CLI `cella` t
 
 Each app gets its own object-store prefix, pinned celld release and loopback
 runtime (8101–8999). Caddy serves a slug directory on port 8000 and each app
-at `/` on a dedicated port (9101–9999) through exe.dev's authenticated
-alternate-port proxy. Fresh x86_64 hosts default to local RustFS for single-node
-development/testing; external S3-compatible storage is optional.
+at `/` on a dedicated port (9101–9999). On exe.dev, its authenticated HTTPS
+proxy forwards those ports; other VMs need equivalent trusted HTTPS/port
+forwarding and owner SSH access. Fresh x86_64 hosts default to local RustFS
+for single-node development/testing; external S3-compatible storage is optional.
 
 ## Host
 
@@ -34,7 +35,8 @@ cella status
 cella logs --lines 50
 ```
 
-First [register the owner SSH key and verify the VM host key](docs/cella.md#owner-ssh-setup).
+See [owner SSH setup](docs/cella.md#owner-ssh-setup) for key authorization
+and VM host-key verification.
 
 ## Documentation
 

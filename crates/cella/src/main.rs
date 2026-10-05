@@ -18,10 +18,10 @@ struct Cli {
     /// Override hosted routing slug, not the native Worker name.
     #[arg(long, global = true)]
     slug: Option<String>,
-    /// Existing owner SSH destination, e.g. vm+NAME@exe.dev (no ssh_config aliases).
+    /// Owner SSH destination, e.g. owner@host or vm+NAME@vm.exe.xyz (no aliases).
     #[arg(long, global = true, env = "CELLA_HOST")]
     host: Option<String>,
-    /// Explicit owner SSH private key registered with exe.dev.
+    /// Explicit private key authorized for the owner SSH account.
     #[arg(long, global = true, env = "CELLA_SSH_KEY")]
     identity: Option<PathBuf>,
     #[arg(long, global = true, env = "CELLA_SSH_PORT", default_value_t = 22)]
@@ -65,7 +65,7 @@ impl Cli {
             identity: self
                 .identity
                 .clone()
-                .context("set --identity or CELLA_SSH_KEY to your exe.dev owner SSH key")?,
+                .context("set --identity or CELLA_SSH_KEY to your owner SSH private key")?,
             port: self.ssh_port,
         })
     }

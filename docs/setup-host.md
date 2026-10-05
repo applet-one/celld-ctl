@@ -1,8 +1,9 @@
 # Set up a host
 
-For a **new** exe.dev Linux VM/server with systemd, sudo, a Rust toolchain,
-Caddy, Python 3, curl and gzip. This is single-node development/testing, not
-HA. Existing hosts: [back up and review migration](operations.md) before
+For a **new** Linux VM/server with systemd, sudo, a Rust toolchain, Caddy,
+Python 3, curl and gzip. The owner needs working SSH and non-interactive
+sudo. This is single-node development/testing, not HA. Existing hosts:
+[back up and review migration](operations.md) before
 reinstalling; never overwrite an existing Caddy configuration or change an app's
 storage target by changing an installer flag.
 
@@ -78,9 +79,12 @@ sudo systemctl reload caddy
 
 Caddy's admin listener is private at `127.0.0.1:2019`. The directory at 8000
 links enabled apps to dedicated Caddy ports 9101–9999; each port proxies all
-paths unchanged to a loopback runtime port 8101–8999. Use exe.dev's
-authenticated alternate-port proxy, **not** direct unauthenticated public HTTP.
-The forwarded-header configuration assumes a trusted upstream HTTPS proxy.
+paths unchanged to a loopback runtime port 8101–8999. On exe.dev, its
+authenticated HTTPS proxy forwards these ports. On another VM, arrange trusted
+HTTPS and access control for **every** directory/app port, preserving public
+port numbers so the directory links work. Do not expose Caddy's plain HTTP
+listeners as unauthenticated public services. The forwarded-header
+configuration assumes a trusted upstream proxy.
 
 ```sh
 sudo systemctl is-active caddy
@@ -93,8 +97,8 @@ sudo systemctl is-active rustfs.service
 Check the exact native pin and private storage files, RustFS S3 on loopback
 9000, private app/internal listeners, and installer storage-readiness results.
 A running service alone does not prove durable publication. An empty registry
-is normal. The owner needs existing exe.dev SSH access and non-interactive
-`sudo -n /usr/local/bin/celld-ctl transport`; no second SSH daemon or deploy
-key is installed. Next: [configure the owner client and verify the VM host
+is normal. The owner needs working SSH access and non-interactive
+`sudo -n /usr/local/bin/celld-ctl transport`; the installer does not add a
+second SSH daemon or deploy key. Next: [configure the owner client and verify the VM host
 key](cella.md#owner-ssh-setup). For backup, migrations and service recovery,
 see [operations](operations.md).
