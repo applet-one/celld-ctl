@@ -1,14 +1,10 @@
 # celld-ctl
 
-A small Rust control layer for hosting independent [celld](https://celld.dev) applications on a single Linux/systemd VM.
+`celld-ctl` is a tiny Rust control layer for hosting [celld](https://celld.dev) applications on a single VM with no external dependencies. Developers keep their apps defined in `wrangler.jsonc` and use the CLI `cella` to deploy them. The goal is a simple testing setup to run cell based apps.
 
-Developers keep their apps defined in `wrangler.jsonc` and use the CLI `cella` to deploy them. Native celld builds existing Wrangler projects.
+## Setup
 
-Each app gets its own object-store prefix, pinned celld release and loopback runtime (8101–8999). Caddy serves a slug directory on port 8000 and each app at `/` on a dedicated port (9101–9999). On exe.dev, its authenticated HTTPS proxy forwards those ports; other VMs need equivalent trusted HTTPS/port forwarding and owner SSH access. 
-
-Fresh x86_64 hosts default to local RustFS for single-node development/testing; external S3-compatible storage is optional.
-
-## Host Machine
+### Host Machine
 
 ```sh
 git clone https://github.com/applet-one/celld-ctl.git; cd celld-ctl
@@ -19,7 +15,7 @@ sudo scripts/install-host.sh
 See [host setup](docs/setup-host.md) for prerequisites, external storage and
 existing-host precautions.
 
-## Dev machine
+### Dev machine
 
 Setup:
 ```sh
@@ -30,18 +26,23 @@ export CELLA_HOST=YOUR_VM_SSH_HOST
 export CELLA_SSH_KEY="$HOME/.ssh/YOUR_VM_KEY"
 ```
 
-App development:
+## App development
 ```sh
-cd /path/to/your/wrangler-project
+cella init
 cella deploy
 cella status
-cella logs --lines 50
+cella logs
 ```
+## Documentation
 
 See [owner SSH setup](docs/cella.md#owner-ssh-setup) for key authorization
 and VM host-key verification.
 
-## Documentation
+
+Each app gets its own object-store prefix, pinned celld release and loopback runtime (8101–8999). Caddy serves a slug directory on port 8000 and each app at `/` on a dedicated port (9101–9999). On exe.dev, its authenticated HTTPS proxy forwards those ports; other VMs need equivalent trusted HTTPS/port forwarding and owner SSH access. 
+
+Fresh x86_64 hosts default to local RustFS for single-node development/testing; external S3-compatible storage is optional.
+
 
 - [Host setup](docs/setup-host.md) · [Owner CLI and SSH setup](docs/cella.md)
 - [Operations, migration, backup and historical test limits](docs/operations.md)
