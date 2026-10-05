@@ -1,7 +1,7 @@
 # celld-ctl
 
 A small Rust control layer for hosting independent [celld](https://celld.dev)
-applications on a systemd VM, plus the separate developer CLI, `cella`.
+applications on a Linux VM with systemd, with a separate developer CLI, `cella`.
 
 Apps keep their existing `wrangler.jsonc`; native celld remains the parser,
 bundler and compatibility authority.
@@ -9,10 +9,11 @@ bundler and compatibility authority.
 Each application gets its own object-store fleet prefix, pinned celld release,
 loopback service, allocated ports, local cache and `/APP_SLUG/` route.
 
+The default installation includes local object storage powered by RustFS.
+
 ## Set up the host
 
-On a fresh **Linux x86_64** single-node development/testing host with
-systemd, using your administrator account:
+On a fresh Linux VM:
 
 ```sh
 git clone https://github.com/applet-one/celld-ctl.git
@@ -21,34 +22,20 @@ cargo build --release --locked -p celld-ctl
 sudo scripts/install-host.sh
 ```
 
-On a **fresh x86_64 host**, the no-flag installer provisions local RustFS,
-generates host-only credentials, creates the bucket, installs the pinned native
-celld release and initializes fresh-host Caddy. No cloud storage account,
-bucket setup or credential edit is needed. Arrange private SSH connectivity
-and enroll deploy keys separately. See [host setup](docs/setup-host.md) for
-prerequisites and [external storage](docs/setup-host.md#external-s3-compatible-storage)
-for the opt-out (`--storage external`).
-
-On a **fresh Linux arm64/aarch64 host**, choose `--storage local` or
-`--storage external` explicitly; the no-flag installer refuses to select a
-default until native arm64 qualification. Existing hosts keep their storage
-mode, data, pins and credentials on reinstall; flags do not migrate storage.
-The October 5, 2026 [live smoke](docs/rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
-passed on an x86_64 Ubuntu 24.04 **systemd Docker container**, not a VM.
-Local storage remains single-node development/testing storage, **not HA**.
-A controlled RustFS stop/restart recovered; abrupt kills, VM reboot, arm64,
-VM deployment and cold-snapshot restore have not been qualified.
+This provisions local RustFS storage. No cloud storage account required.
+See [host setup](docs/setup-host.md) for prerequisites, arm64 instructions and
+external storage options.
 
 ## Set up your dev machine
 
-On your laptop/workstation or CI runner—not on the host VM.
+On you our dev machine:
 
 ### SSH access
 
 Use your existing administrator SSH access to enroll a separate deployment key.
 Complete host setup first; replace `admin@vm` with your usual SSH destination.
 
-**1. Create a key on your dev machine.** Choose another filename if it already exists.
+**1. Create a key on your dev machine.** Choose a different filename if the key already exists.
 
 ```sh
 ssh-keygen -t ed25519 -f ~/.ssh/cella-deploy -N '' -C 'cella developer laptop'
@@ -79,13 +66,14 @@ Key enrollment grants access but does not set up connectivity. Obtain the privat
 deployment hostname, port `2222`, username `cella-deploy` and application URL from
 the host operator. See [Dev-machine setup](docs/setup-cella.md) for details.
 
-### cella
+### Configure cella
 
-1. Install/update `cella` (client and host must be `0.2.0` or later).
-2. Configure the private SSH destination, explicit key file and port.
+1. Install or update `cella` (client and host must be `0.2.0` or later).
+2. Configure the private SSH destination, key file and port explicitly.
 3. Verify the server fingerprint before adding its key to `known_hosts`.
 
 See [Dev-machine setup](docs/setup-cella.md) for commands and troubleshooting.
+
 **Developers and CI need no host object-store credentials or bucket
 configuration.** Never put private keys in Wrangler or this repository.
 
@@ -102,7 +90,7 @@ cella deployments list
 ```
 
 `cella deploy` creates the app automatically, downloads the exact host-pinned
-celld release, builds locally, and uploads the prepared package over restricted
+celld release, builds locally and uploads the prepared package over restricted
 SSH. The host publishes with its own storage credentials, then activates or
 reloads the app.
 
