@@ -4,12 +4,12 @@ use celld_ctl_core::{Request, Response};
 use serde_json::{json, Value};
 use std::path::Path;
 
-const HELP:&str="celld-ctl (root operator)\n  create|enable|disable|start|stop|restart|remove|target|reload|status SLUG\n  logs SLUG [--lines 1..1000]\n  deployments SLUG\n  list\n  backup\n  storage prepare-local|init-local  (host installer only)\n  import-counter --celld-version VERSION [--version-id ID] [--enabled]\n  transport  (fixed forced SSH command; one JSON request on stdin)\nOperator-only test/staging path injection: --root ABSOLUTE_PATH before command.\n";
+const HELP:&str="celld-ctl (root operator)\n  create|enable|disable|start|stop|restart|remove|target|reload|status SLUG\n  logs SLUG [--lines 1..1000]\n  deployments SLUG\n  list\n  backup\n  storage prepare-local|init-local  (host installer only)\n  import-counter --celld-version VERSION [--version-id ID] [--enabled]\n  transport  (owner SSH via sudo -n; one bounded JSON request on stdin)\nOperator-only test/staging path injection: --root ABSOLUTE_PATH before command.\n";
 fn require_root() -> Result<()> {
     // SAFETY: geteuid has no preconditions or side effects.
     ensure!(
         unsafe { libc::geteuid() } == 0,
-        "celld-ctl requires root; use the installed restricted helper"
+        "celld-ctl requires root; use sudo -n /usr/local/bin/celld-ctl transport for owner SSH"
     );
     Ok(())
 }
@@ -127,13 +127,6 @@ fn run_transport(args: &[String]) -> Result<Value> {
         args == ["transport"],
         "transport accepts no command-line arguments or overrides"
     );
-    let original = std::env::var_os("SSH_ORIGINAL_COMMAND")
-        .map(|s| {
-            s.into_string()
-                .map_err(|_| anyhow::anyhow!("SSH command is not UTF-8"))
-        })
-        .transpose()?;
-    transport::validate_original_command(original.as_deref())?;
     require_root()?;
     let incoming = transport::read_stdin()?;
     let paths = Paths::production();
@@ -150,8 +143,7 @@ fn main() {
     }
     let args: Vec<String> = std::env::args().skip(1).collect();
     let is_transport = args.first().map(String::as_str) == Some("transport");
-    // A remotely inherited original command can never select an operator path.
-    if is_transport || std::env::var_os("SSH_ORIGINAL_COMMAND").is_some() {
+    if is_transport {
         // Outer failsafe leaves room for the bounded input, lock, native publish,
         // configured readiness and Caddy/systemd rollback phases to complete.
         unsafe {

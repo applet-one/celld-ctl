@@ -1,7 +1,9 @@
 //! Credential-free, bounded host/developer transport contract.
 use serde::{Deserialize, Serialize};
 
-pub const SSH_COMMAND: &str = "celld-ctl-transport";
+/// Fixed remote command on the owner's existing SSH gateway connection.
+/// The administrator login is trusted; this does not grant a restricted CI identity.
+pub const SSH_COMMAND: &str = "sudo -n /usr/local/bin/celld-ctl transport";
 pub const MAX_REQUEST_BYTES: usize = 16 * 1024;
 pub const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 pub const MAX_LOG_LINES: u32 = 1000;

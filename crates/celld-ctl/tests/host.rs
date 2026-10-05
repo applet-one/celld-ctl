@@ -5,7 +5,7 @@ use celld_ctl::{
     registry::App,
     render,
     runtime::{validate_pointer, Runtime},
-    transport::{parse_request, validate_original_command},
+    transport::parse_request,
 };
 use celld_ctl_core::{Request, Target, MAX_REQUEST_BYTES};
 use serde_json::json;
@@ -395,12 +395,9 @@ fn disable_and_remove_never_delete_durable_or_local_state() {
 fn backup_is_consistent_private_and_has_no_node_slug_collision() {
     let f = Fixture::new();
     let mut m = activated(&f, "node");
-    fs::create_dir_all(f.paths.authorized_keys.parent().unwrap()).unwrap();
-    fs::write(
-        &f.paths.authorized_keys,
-        "restrict ssh-ed25519 EXAMPLE owner",
-    )
-    .unwrap();
+    let old_key = f._root.path().join("etc/celld-ctl/ssh-host-ed25519-key");
+    fs::create_dir_all(old_key.parent().unwrap()).unwrap();
+    fs::write(&old_key, b"obsolete private SSH key must not be backed up").unwrap();
     let result = m.backup().unwrap();
     let path = PathBuf::from(result["backup"].as_str().unwrap());
     assert!(path.join("COMPLETE").is_file());
@@ -413,7 +410,8 @@ fn backup_is_consistent_private_and_has_no_node_slug_collision() {
     assert!(!fs::read_to_string(path.join("cells/node.env"))
         .unwrap()
         .contains("EXAMPLESECRET"));
-    assert!(path.join("ssh/authorized_keys").is_file());
+    assert!(!path.join("ssh").exists());
+    assert!(!path.join("units/cella-sshd.service").exists());
     assert!(path.join("config/pins.json").is_file());
     assert_eq!(
         fs::metadata(&path).unwrap().permissions().mode() & 0o777,
@@ -483,17 +481,6 @@ fn lock_is_held_for_entire_manager_lifetime() {
 }
 #[test]
 fn transport_rejects_unknown_commands_fields_paths_and_large_inputs() {
-    for command in [
-        "",
-        "bash",
-        "celld-ctl transport",
-        "celld-ctl-transport;id",
-        "celld-ctl-transport ",
-    ] {
-        assert!(validate_original_command(Some(command)).is_err());
-    }
-    validate_original_command(Some("celld-ctl-transport")).unwrap();
-    validate_original_command(None).unwrap();
     for bytes in [
         br#"{"op":"remove","slug":"app"}"#.as_slice(),
         br#"{"op":"target","slug":"app","config":"/tmp/x"}"#,
@@ -606,7 +593,6 @@ fn cli_accepts_transport_as_a_slug_not_as_a_command() {
             "status",
             "transport",
         ])
-        .env_remove("SSH_ORIGINAL_COMMAND")
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -616,10 +602,10 @@ fn cli_accepts_transport_as_a_slug_not_as_a_command() {
     assert!(!stderr.contains("transport forbids"));
 }
 #[test]
-fn cli_rejects_arbitrary_remote_command_before_any_host_io() {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_celld-ctl"))
-        .arg("transport")
-        .env("SSH_ORIGINAL_COMMAND", "sh -c id")
+fn direct_transport_rejects_arguments_and_never_accepts_staging_path() {
+    let binary = env!("CARGO_BIN_EXE_celld-ctl");
+    let output = std::process::Command::new(binary)
+        .args(["transport", "--root", "/tmp"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -628,7 +614,37 @@ fn cli_rejects_arbitrary_remote_command_before_any_host_io() {
     assert!(value["error"]
         .as_str()
         .unwrap()
-        .contains("SSH command rejected"));
+        .contains("no command-line arguments"));
+    assert!(output.stderr.is_empty());
+    let output = std::process::Command::new(binary)
+        .args(["--root", "/tmp", "transport"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+}
+#[test]
+fn direct_transport_parses_bounded_input_without_forced_wrapper() {
+    use std::process::Stdio;
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_celld-ctl"))
+        .arg("transport")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    // A non-root test runner may exit before reading stdin.
+    let _ = child.stdin.take().unwrap().write_all(b"invalid JSON");
+    let output = child.wait_with_output().unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.len() <= celld_ctl_core::MAX_RESPONSE_BYTES);
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["ok"], false);
+    let error = value["error"].as_str().unwrap();
+    // Non-root test runners stop at the privilege check; root runners parse
+    // the bounded stdin before opening any production host state.
+    assert!(error.contains("requires root") || error.contains("invalid transport request"));
     assert!(output.stderr.is_empty());
 }
 
@@ -660,52 +676,6 @@ fn atomic_public_modes_survive_private_umask() {
         fs::metadata(private).unwrap().permissions().mode() & 0o777,
         0o600
     );
-}
-
-#[test]
-fn backup_includes_dedicated_ssh_daemon_and_private_host_identity() {
-    let f = Fixture::new();
-    let mut m = f.manager();
-    for (path, contents) in [
-        (
-            &f.paths.dedicated_ssh_config,
-            "Port 2222\nListenAddress 127.0.0.1\n",
-        ),
-        (
-            &f.paths.ssh_host_key,
-            "PRIVATE_TEST_HOST_KEY_NOT_A_REAL_KEY",
-        ),
-        (&f.paths.ssh_host_public_key, "ssh-ed25519 TEST_HOST_KEY"),
-        (
-            &f.paths.ssh_service,
-            "[Service]\nExecStart=/usr/sbin/sshd -D\n",
-        ),
-    ] {
-        fs::write(path, contents).unwrap();
-    }
-    let result = m.backup().unwrap();
-    let root = Path::new(result["backup"].as_str().unwrap());
-    for name in [
-        "ssh/sshd_config",
-        "ssh/ssh-host-ed25519-key",
-        "ssh/ssh-host-ed25519-key.pub",
-        "units/cella-sshd.service",
-    ] {
-        assert!(root.join(name).is_file());
-        assert_eq!(
-            fs::metadata(root.join(name)).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
-    }
-    assert_eq!(
-        fs::read_to_string(root.join("ssh/ssh-host-ed25519-key")).unwrap(),
-        "PRIVATE_TEST_HOST_KEY_NOT_A_REAL_KEY"
-    );
-    assert_eq!(result["contains_credentials"], true);
-    assert!(!fs::read(&f.paths.registry)
-        .unwrap()
-        .windows(b"PRIVATE_TEST_HOST_KEY_NOT_".len())
-        .any(|v| v == b"PRIVATE_TEST_HOST_KEY_NOT_"));
 }
 
 #[test]

@@ -20,8 +20,9 @@ cella deploy -> local native dry-run/esbuild
 HTTPS proxy -> Caddy :8000 -> /app/* -> celld-cell@app.service (127.0.0.1:PORT)
 ```
 
-Developers and CI configure only restricted SSH access, not bucket settings or
-storage credentials. Local builds remove storage environment variables; SSH
+VM owners configure their existing exe.dev SSH gateway destination and
+registered owner key, not bucket settings or storage credentials. CI and
+other developers have no independent deploy identity in this workflow. Local builds remove storage environment variables; SSH
 never forwards credentials. The host independently validates a prepared package,
 normalizes a private deployment-only config copy and runs exact pinned native
 celld without user build tools. User Wrangler files stay unchanged. Native celld
@@ -45,9 +46,12 @@ in an x86_64 systemd Docker container. It does not qualify VM/arm64 deployment,
 cold restore, abrupt failure recovery or production durability.
 
 This is a trusted-deployer single-host MVP, not a hostile multi-tenant boundary.
-Deploy keys are fleet-wide; serving uses a shared runtime account. The dedicated
+Owner SSH authority is VM-wide, not app-scoped; serving uses a shared runtime
+account. `cella` requests only the fixed sudo transport command, but the
+owner credential itself can use ordinary VM SSH and sudo. There is no
+deployment-only SSH account/server, relay or tailnet. The dedicated
 publisher cannot modify its staged root-owned inputs or access root-only files.
-No remote shell, arbitrary host path, package install, container build or app-
-secret management endpoint is provided. Publication followed by activation is
+No **transport API** for arbitrary host paths, package installs, container
+builds or app secrets is provided; the owner can still open a normal VM shell. Publication followed by activation is
 not a distributed atomic transaction; a published pointer can already be adopted
 when activation reports failure.

@@ -113,7 +113,8 @@ if [ "$1" = deploy ] && env | grep -E '^(AWS_|S3_|CELLD_BUCKET=)' >/dev/null; th
             &self.bin.join("ssh"),
             &format!(
                 r#"#!/bin/sh
-if env | grep -E '^(AWS_|S3_|CELLD_BUCKET=|SSH_AUTH_SOCK=)' >/dev/null; then echo 'credentials leaked to SSH' >&2; exit 90; fi
+if env | grep -E '^(AWS_|S3_|CELLD_BUCKET=)' >/dev/null; then echo 'credentials leaked to SSH' >&2; exit 90; fi
+if [ "$SSH_AUTH_SOCK" != "/unused-agent" ]; then echo 'expected local agent socket' >&2; exit 90; fi
 printf '%s\n' "$@" >> {ssh_args}
 IFS= read -r request
 printf '%s\n' "$request" >> {requests}
@@ -160,9 +161,9 @@ esac
             .arg("--project")
             .arg(&self.root)
             .arg("--host")
-            .arg("cella-deploy@example.invalid")
+            .arg("vm+my-vm@vm.exe.xyz")
             .arg("--identity")
-            .arg(self._temp.path().join("deploy-key"));
+            .arg(self._temp.path().join("owner-key"));
         command
     }
     fn run(&self, args: &[&str]) -> Output {
@@ -232,7 +233,11 @@ fn ssh_only_publish_captures_native_output_without_credentials_or_project_change
     assert!(!request_json.contains("AWS_"));
     assert!(!request_json.contains("bucket"));
     let ssh_args = fs::read_to_string(f.root.join("ssh-args")).unwrap();
-    assert!(ssh_args.contains("celld-ctl-transport"));
+    assert!(ssh_args.contains("vm+my-vm@vm.exe.xyz"));
+    assert!(ssh_args.contains("sudo -n /usr/local/bin/celld-ctl transport"));
+    assert!(ssh_args.contains("StrictHostKeyChecking=yes"));
+    assert!(ssh_args.contains("ForwardAgent=no"));
+    assert!(ssh_args.contains("-p\n22"));
     assert!(!ssh_args.contains("native-version-id"));
     assert!(!f._temp.path().join("native-out").exists());
 }

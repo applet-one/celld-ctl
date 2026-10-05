@@ -1,122 +1,120 @@
-# B. Configure and set up cella on your dev machine
+# B. Set up cella on the owner's dev machine
 
-**Run these steps on your laptop/workstation or CI runner—not the host VM.**
-The operator must first complete [A. Set up celld-ctl](setup-host.md).
-You need an existing Wrangler Worker project and restricted SSH access, but
-**no host object-store credentials, bucket name, endpoint or region**.
-Application R2 bindings in Wrangler, if used, are separate from the host's
-storage provider.
+Follow [A. Host setup](setup-host.md) first. This workflow is for an **exe.dev VM
+owner**, using that owner's existing SSH gateway identity. There is no separate
+`cella-deploy` login, deployment SSH daemon, relay or private network. `cella`
+needs no host bucket, endpoint, region or object-store credentials. Existing
+application R2 bindings in Wrangler are unrelated to host storage.
 
-## B1. Install/update cella
-
-From this repository on your development machine:
+## B1. Install cella and local build tools
 
 ```sh
 cargo install --locked --path crates/cella --force
 cella --version
 ```
 
-Use client/host version 0.2.0 or later. The original 0.1 client published directly
-to object storage and is not compatible with the new host deployment targets.
-You need a Rust toolchain to build this CLI, curl for native release downloads,
-OpenSSH client, and your project's Node.js/npm/pnpm/Yarn dependencies. Bundled
-JS/TS projects need local esbuild; the host does not install or run your build
-tools. Supported developer platforms are Linux x86_64/arm64 and macOS arm64.
+Use matching client/host version 0.2.0 or later; the 0.1 client published
+directly to object storage. You need Rust to build `cella`, an OpenSSH client,
+`curl` for exact native release downloads, and your project's Node.js package
+tools and dependencies (including esbuild when needed). Supported developer
+platforms: Linux x86_64/arm64 and macOS arm64.
 
-## B2. Generate a dedicated deployment key
+## B2. Register the owner's public key with exe.dev
 
-On **your dev machine**. If `~/.ssh/cella-deploy` already exists, choose another
-filename and use it throughout this guide; do not overwrite an existing key.
+If you already SSH into the VM with an exe.dev-registered key, reuse it and
+substitute its path throughout. For a new key, **on your dev machine**, choose
+a new filename if the path exists:
 
 ```sh
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
-ssh-keygen -t ed25519 -f "$HOME/.ssh/cella-deploy" -N '' -C 'cella developer laptop'
-chmod 600 "$HOME/.ssh/cella-deploy"
-cat "$HOME/.ssh/cella-deploy.pub"
+ssh-keygen -t ed25519 -f "$HOME/.ssh/cella-owner" -C 'exe.dev VM owner'
+chmod 600 "$HOME/.ssh/cella-owner"
+ssh-keygen -lf "$HOME/.ssh/cella-owner.pub"
+cat "$HOME/.ssh/cella-owner.pub" | ssh exe.dev ssh-key add
 ```
 
-Do not overwrite an existing key at that path; use another filename if needed.
-This creates:
+The fingerprint from `ssh-keygen -lf` identifies **your authentication key**,
+not the VM server. Only the `.pub` file goes to exe.dev; never upload or commit
+the private key. The `ssh exe.dev` registration command must authenticate with
+an already registered owner key; if it cannot, use your account's existing key
+registration flow first. exe.dev's [ssh-key command](https://exe.dev/docs/cli-ssh-key.md)
+documents the pipe form, listing and revoking account keys. Avoid registering a
+new key when the old one suffices. Prefer a passphrase and unlock the key in
+your **local** agent with `ssh-add "$HOME/.ssh/cella-owner"` before using
+`cella`. Alternatively, generate a key with `-N ''` if you cannot use an
+agent. `cella` runs SSH in batch mode: it cannot prompt for a passphrase on
+demand. Protect the private file (mode 0600), keep it on your dev machine and
+revoke it at exe.dev if compromised. Do not reuse it for CI.
 
-| File | Purpose | Share it? |
-| --- | --- | --- |
-| `~/.ssh/cella-deploy` | Your **private** deployment key | **Never**; keep it on this machine |
-| `~/.ssh/cella-deploy.pub` | Your public authentication key | Send it to the host operator |
+## B3. Select your actual VM SSH destination
 
-The empty passphrase is intentional: this MVP uses batch SSH, disables agent
-lookup, and cannot prompt to unlock encrypted keys. Protect the private file
-and use a dedicated, revocable key—not your administrator key. Generate a
-separate key for CI and keep its private half in your CI secret store.
-
-Send **only the `.pub` file** via an authenticated administrator channel. The
-operator runs A6 to enroll it; wait for confirmation. The restricted deployment
-account cannot receive files with SFTP/scp and cannot run `ssh-copy-id`.
-
-## B3. Configure the SSH destination
-
-Obtain the private deployment hostname/IP, port, server-key fingerprint, and
-application URL from the operator. Set these on **your dev machine**:
+First confirm ordinary SSH from your dev machine works:
 
 ```sh
-DEPLOY_HOST=PRIVATE_DEPLOY_HOST  # replace with the real private hostname/IP
-export CELLA_HOST="cella-deploy@$DEPLOY_HOST"
-export CELLA_SSH_PORT=2222
-export CELLA_SSH_KEY="$HOME/.ssh/cella-deploy"
+ssh -i "$HOME/.ssh/cella-owner" -o IdentitiesOnly=yes YOUR_VM.exe.xyz
+# If that form fails, use the gateway form instead:
+ssh -i "$HOME/.ssh/cella-owner" -o IdentitiesOnly=yes vm+YOUR_VM@vm.exe.xyz
 ```
 
-These variables may be saved in your personal shell profile (for example,
-`~/.zshrc` or `~/.bashrc`). Store only connection settings there, not private-key
-contents. You can instead use `--host`, `--ssh-port`, `--identity` on each call.
-Do not add SSH or storage settings to `wrangler.jsonc`.
-
-`cella` deliberately ignores `~/.ssh/config` and uses a literal hostname,
-explicit key and port. SSH aliases, ProxyJump/ProxyCommand and agent discovery
-are not used. The application HTTPS hostname or ordinary VM-owner SSH address
-is **not necessarily** the deployment endpoint. Join the approved private
-network if required; a valid key alone cannot reach a loopback-only listener.
-
-If you are the VM owner and prefer existing administrator SSH rather than a
-tailnet, use the [SSH stdio relay](ssh-stdio-relay.md). It presents the dedicated
-service on your own `127.0.0.1:2222`; follow that guide for destination/fingerprint
-setup. No `cella` reinstall or TCP-forwarding permission is required.
-
-## B4. Verify and enroll the dedicated SERVER host key
-
-Strict host-key checking is enabled; `cella` will not auto-trust a new server.
-This key is **different from your own deploy key** generated in B2.
-
-Fetch the public server key over the approved network path:
+These are **placeholders**, not names of this project's VM. exe.dev documents
+[both destination forms](https://exe.dev/docs/faq/ssh-destination.md). Use the
+working, literal destination in your shell (do not include `ssh `):
 
 ```sh
-ssh-keyscan -p "$CELLA_SSH_PORT" -t ed25519 "$DEPLOY_HOST" \
-  > "$HOME/.ssh/cella-host-key.scan"
-ssh-keygen -lf "$HOME/.ssh/cella-host-key.scan"
+export CELLA_HOST=YOUR_VM.exe.xyz
+# Or: export CELLA_HOST=vm+YOUR_VM@vm.exe.xyz
+export CELLA_SSH_KEY="$HOME/.ssh/cella-owner"
+# Port 22 is the default; do not use the old deployment port 2222.
 ```
 
-**Stop and compare the reported SHA256 fingerprint with the value supplied
-by the operator through a trusted channel (A7).** `ssh-keyscan` alone does not
-authenticate a server. Do not append the key if it differs or the operator has
-not provided a fingerprint.
+`cella` ignores `~/.ssh/config` (`-F /dev/null`), so aliases, ProxyJump and
+custom proxy commands there are not used. Set `CELLA_SSH_KEY` explicitly to
+the registered owner key (or pass `--identity`); `IdentitiesOnly=yes` prevents
+accidentally offering another account's key. `CELLA_HOST`, `CELLA_SSH_KEY` and
+`CELLA_SSH_PORT` can also be set with `--host`, `--identity` and `--ssh-port`. Keep them out of `wrangler.jsonc`.
 
-Only after a match:
+## B4. Verify the VM's SSH host key
+
+`cella` uses strict host-key checking: establish a trusted `known_hosts` entry
+for the **exact hostname and port** of the working destination before running it.
+On the first ordinary `ssh` connection, compare the presented **VM host-key
+SHA256 fingerprint** with one obtained independently through trusted VM access
+or the operator; reject an unexpected key. If you cannot establish a trusted
+fingerprint, ask the platform/operator for help instead of blindly accepting it.
+Never copy an instance-specific fingerprint into this repository.
+For a key retrieved out of band in a file:
 
 ```sh
-cat "$HOME/.ssh/cella-host-key.scan" >> "$HOME/.ssh/known_hosts"
+ssh-keygen -lf /path/to/trusted-vm-host-key.pub
+```
+
+Do not mistake your `.pub` authentication-key fingerprint in B2 for the
+server fingerprint. exe.dev publishes a fingerprint for `ssh exe.dev` in its
+[host-key FAQ](https://exe.dev/docs/faq/host-key.md); that FAQ does **not**
+claim the fingerprint also applies to `YOUR_VM.exe.xyz` or `vm.exe.xyz`.
+A scan alone does **not** authenticate the VM. For the direct-hostname form
+only, you can inspect a scanned key without trusting it:
+
+```sh
+ssh-keyscan -t ed25519 YOUR_VM.exe.xyz > "$HOME/.ssh/cella-vm-key.scan"
+ssh-keygen -lf "$HOME/.ssh/cella-vm-key.scan"
+# Only after an independent fingerprint match:
+cat "$HOME/.ssh/cella-vm-key.scan" >> "$HOME/.ssh/known_hosts"
 chmod 600 "$HOME/.ssh/known_hosts"
 ```
 
-The scan records the exact hostname and port, such as `[PRIVATE_DEPLOY_HOST]:2222`.
-Repeat verification for a different hostname/IP/port. Never work around an error
-with `StrictHostKeyChecking=no`. A changed key requires operator confirmation
-of an intentional server-key rotation, not blindly deleting known-host entries.
+For `vm+YOUR_VM@vm.exe.xyz`, do **not** assume a scan of
+`YOUR_VM.exe.xyz` is interchangeable. Check the fingerprint presented by
+`ssh -i "$CELLA_SSH_KEY" -o IdentitiesOnly=yes vm+YOUR_VM@vm.exe.xyz`
+against a trusted value for that destination before accepting the entry.
+Never bypass a mismatch with `StrictHostKeyChecking=no`; investigate rotation
+with the VM owner.
 
-## B5. Deploy your existing project
+## B5. Deploy your existing Wrangler project
 
-Open a terminal in the directory containing your `wrangler.jsonc` or
-`wrangler.json`. Install your project's dependencies with its usual package
-manager. If required and missing, install esbuild as a development dependency
-(e.g. `npm install --save-dev esbuild` for npm projects).
+Install your project's dependencies; from its `wrangler.jsonc`/`wrangler.json`
+directory:
 
 ```sh
 cella deploy
@@ -125,49 +123,38 @@ cella logs --lines 50
 cella deployments list
 ```
 
-Or use `cella --project /path/to/project deploy` from another directory.
-**The first command creates the app automatically**; status/history are useful
-*after* that first deployment. There is no need for an operator to pre-create
-it or for you to configure a local bucket, region, endpoint or storage keys.
+The first deploy provisions the app automatically. The host publishes using
+host-only credentials; `cella` builds and uploads a bounded prepared package.
+Your Wrangler file is not rewritten. The Worker name becomes `/name/` at the
+operator's app URL; `--slug` overrides the routing slug. Caddy keeps that
+prefix, so account for it in your app's router. The transport runs `sudo -n /usr/local/bin/celld-ctl transport` through the
+owner login, requiring non-interactive sudo access. Ordinary owner `ssh` may grant
+a full shell: `cella` requests only the fixed transport command, but the SSH
+identity is **not** restricted to deploying. Do not distribute it to CI or
+untrusted users.
 
-`cella` downloads the exact host-pinned native celld release, validates/bundles
-locally without storage credentials, and uploads prepared files over restricted
-SSH. The host publishes using its own credentials, verifies the deployment,
-activates/reloads the service and records the source revision. Wrangler files
-are not rewritten. The project's Worker `name` becomes `/name/` under the
-operator's application base URL; `--slug` can override that route identity.
-Caddy preserves the whole `/name/` path, so your router must account for it.
-
-You cannot test this account by requesting an ordinary SSH shell: that is
-intentionally rejected. Use `cella` commands, not arbitrary SSH commands.
-
-## B6. Optional local development
+Optional local development without SSH or storage credentials:
 
 ```sh
-cella dev --celld-version X.Y.Z  # replace with an exact supported release
+cella dev --celld-version X.Y.Z
 ```
 
-With an explicit pin, this works without SSH or storage credentials. After a
-successful deployment, `cella dev` can obtain the existing app's pin through
-SSH without setting a separate version. Native celld owns watching/local state.
+Without an explicit pin, `cella dev` can fetch an already deployed target's
+pin via SSH. Native celld handles the local watcher and state.
 
 ## Troubleshooting
 
 | Symptom | Check |
 | --- | --- |
-| Connection refused, timeout or DNS failure | Private network and deployment hostname/port from A5; not the HTTPS proxy or primary SSH endpoint |
-| `Permission denied (publickey)` | Correct private file, `cella-deploy` username, enrolled public key/label, no required key passphrase |
-| Host-key verification failed | B4 for the **dedicated** service and exact hostname/port; compare the operator's fingerprint |
-| Unknown app from `status` | Run the first successful `cella deploy`; status does not create apps |
-| esbuild missing | Install the project's dependencies/local esbuild; or configure `CELLD_ESBUILD` locally |
-| Native storage/publish error | Ask the host operator to check [host storage](setup-host.md#a3-configure-storage-on-the-host-only) and, on default x86_64 local-storage hosts, [RustFS health](operations.md#local-storage-service-and-recovery-when-installed); on external hosts, check the configured endpoint and bucket. Do **not** add host storage credentials on your laptop |
-| Pin/version mismatch | Check client/host 0.2 compatibility and exact native pin; do not substitute latest |
-| Publish succeeded but activation failed | Inspect status/logs and retry the same source; the published pointer can already be adopted |
+| SSH DNS/connection failure | Use the [documented VM destination](https://exe.dev/docs/faq/ssh-destination.md), not the app HTTPS URL; try `vm+YOUR_VM@vm.exe.xyz`. Port is 22. |
+| `Permission denied (publickey)` | Does `ssh -i "$CELLA_SSH_KEY" -o IdentitiesOnly=yes "$CELLA_HOST"` work with the registered owner key? For passphrase keys, run `ssh-add "$CELLA_SSH_KEY"` first. |
+| Host-key verification failure | B4: compare the **VM** fingerprint for the actual destination; do not auto-accept changed keys. |
+| Remote transport rejected | Reinstall/update host binaries and verify owner SSH command policy with [host operations](operations.md#owner-ssh-transport-and-trust-boundary). |
+| Unknown app from `status` | Run the first successful `cella deploy`. |
+| esbuild missing | Install project dependencies/esbuild or set `CELLD_ESBUILD` locally. |
+| Native storage/publish error | Operator checks [host storage](setup-host.md#a3-configure-storage-on-the-host-only); never add host storage credentials locally. |
+| Pin/version mismatch | Check client/host compatibility and exact native pin, not `latest`. |
+| Publish succeeded but activation failed | Check status/logs before retrying; the published pointer may already be adopted. |
 
-For CI, follow B2–B5 with a separate key, private network access, a verified
-`known_hosts` entry and `--source-revision COMMIT_SHA`. Only SSH credentials
-belong in the CI deployment setup; no host object-store secret is needed.
-
-Protocol, transport limits, tooling, rollback caveats and detailed behavior:
-[developer reference](cella.md). Operator key revocation and backups:
-[host operations](operations.md).
+Detailed CLI/protocol behavior: [developer reference](cella.md). Backups and
+old SSH cleanup: [host operations](operations.md).

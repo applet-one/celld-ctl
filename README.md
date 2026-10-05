@@ -1,19 +1,12 @@
 # celld-ctl
 
 A small Rust control layer for hosting independent [celld](https://celld.dev)
-applications on a Linux VM with systemd, with a separate developer CLI, `cella`.
+applications on an exe.dev Linux VM with systemd, plus the developer CLI `cella`.
+Apps keep their `wrangler.jsonc`; native celld parses and builds them. Each app
+gets its own storage prefix, pinned celld release, loopback service and `/SLUG/`
+route. Fresh x86_64 installs use local RustFS storage by default.
 
-Apps keep their existing `wrangler.jsonc`; native celld remains the parser,
-bundler and compatibility authority.
-
-Each application gets its own object-store fleet prefix, pinned celld release,
-loopback service, allocated ports, local cache and `/APP_SLUG/` route.
-
-The default installation includes local object storage powered by RustFS.
-
-## Set up the host
-
-On a fresh Linux VM:
+## Host (VM owner)
 
 ```sh
 git clone https://github.com/applet-one/celld-ctl.git
@@ -22,95 +15,42 @@ cargo build --release --locked -p celld-ctl
 sudo scripts/install-host.sh
 ```
 
-This provisions local RustFS storage. No cloud storage account required.
-See [host setup](docs/setup-host.md) for prerequisites, arm64 instructions and
-external storage options.
+Use your **existing exe.dev owner SSH login**; the installer does not set up a
+second SSH server, relay, tailnet or deployment key. See [host setup](docs/setup-host.md)
+for prerequisites, storage options and [existing-host cleanup](docs/operations.md#existing-host-migration-from-dedicated-deployment-ssh).
 
-## Set up your dev machine
+## Developer machine (VM owner only)
 
-On you our dev machine:
-
-### SSH access
-
-Use your existing administrator SSH access to enroll a separate deployment key.
-Complete host setup first; replace `admin@vm` with your usual SSH destination.
-
-**1. Create a key on your dev machine.** Choose a different filename if the key already exists.
+In a checkout of this repository on your dev machine, use an existing registered
+owner key or create a new one (do not overwrite an existing file). For a new key:
 
 ```sh
-ssh-keygen -t ed25519 -f ~/.ssh/cella-deploy -N '' -C 'cella developer laptop'
-```
-
-Keep the private key on your dev machine. The empty passphrase is required by
-`cella`'s current batch SSH transport.
-
-**2. Copy only the public key using your existing SSH access.**
-
-```sh
-scp ~/.ssh/cella-deploy.pub admin@vm:~/cella-deploy.pub
-```
-
-**3. Log in to the VM and enroll the key.**
-
-```sh
-ssh admin@vm
-sudo celld-deploy-key add developer-laptop "$HOME/cella-deploy.pub" --kind owner
-sudo ssh-keygen -lf /etc/celld-ctl/ssh-host-ed25519-key.pub
-```
-
-The last command prints the deployment server's fingerprint; save it for
-verification on your dev machine. Use your administrator account for these
-steps, not the restricted `cella-deploy` account.
-
-Key enrollment grants access but does not set up connectivity. Obtain the private
-deployment hostname, port `2222`, username `cella-deploy` and application URL from
-the host operator. See [Dev-machine setup](docs/setup-cella.md) for details.
-
-### Configure cella
-
-1. Install or update `cella` (client and host must be `0.2.0` or later).
-2. Configure the private SSH destination, key file and port explicitly.
-3. Verify the server fingerprint before adding its key to `known_hosts`.
-
-See [Dev-machine setup](docs/setup-cella.md) for commands and troubleshooting.
-
-**Developers and CI need no host object-store credentials or bucket
-configuration.** Never put private keys in Wrangler or this repository.
-
-## Deploy an app
-
-In your existing Wrangler project, install dependencies with your usual package
-manager, then run:
-
-```sh
+cargo install --locked --path crates/cella --force
+ssh-keygen -t ed25519 -f ~/.ssh/cella-owner  # skip if you already have a registered key
+cat ~/.ssh/cella-owner.pub | ssh exe.dev ssh-key add
+ssh-add ~/.ssh/cella-owner  # if the key has a passphrase
+export CELLA_HOST=YOUR_VM.exe.xyz
+export CELLA_SSH_KEY="$HOME/.ssh/cella-owner"
 cella deploy
 cella status
 cella logs --lines 50
-cella deployments list
 ```
 
-`cella deploy` creates the app automatically, downloads the exact host-pinned
-celld release, builds locally and uploads the prepared package over restricted
-SSH. The host publishes with its own storage credentials, then activates or
-reloads the app.
-
-Supported dev platforms: Linux x86_64/arm64 and macOS arm64, with
-JavaScript/TypeScript projects using npm, pnpm or Yarn.
+If the direct hostname does not work, use `vm+YOUR_VM@vm.exe.xyz` instead.
+For an existing key, substitute its path and skip generation/registration.
+Verify the VM host-key fingerprint before adding it to `known_hosts`; see
+[dev-machine setup](docs/setup-cella.md) for key generation, exact commands
+and troubleshooting. Never put keys or host storage credentials in this repo or
+Wrangler. There is no independently scoped CI/developer access in this owner-only
+workflow.
 
 ## Documentation
 
-- [A. Host setup](docs/setup-host.md)
-- [B. Dev-machine setup and SSH keys](docs/setup-cella.md)
-- [Host installation, migration, security and operations](docs/operations.md)
-- [Developer CLI](docs/cella.md)
-- [Owner SSH stdio relay (no Tailscale/TCP forwarding)](docs/ssh-stdio-relay.md)
-- [Architecture](docs/architecture.md)
-- [Implementation plan](docs/implementation-plan.md)
+- [Host setup](docs/setup-host.md) · [Dev-machine setup](docs/setup-cella.md)
+- [Operations, migration and security](docs/operations.md) · [Developer CLI](docs/cella.md)
+- [Architecture](docs/architecture.md) · [Implementation status](docs/implementation-plan.md)
 - [Instance separation](docs/instance-separation.md)
-- Generic [systemd](examples/systemd/), [SSH](examples/ssh/) and
-  [configuration](examples/config/) templates
 
-**Repository boundary:** reusable code, tests and generic artifacts only.
-Credentials, hostnames, keys, registries, generated routes, local celld state
-and deployed applications stay outside this checkout. Capacity qualification,
-Rust/Wasm toolchains, runtime app secrets and multi-host scheduling are deferred.
+**Repository boundary:** reusable code and generic templates only. Hostnames,
+keys, credentials, registries, generated routes and deployed apps stay outside
+this checkout. Capacity qualification and production durability remain separate.

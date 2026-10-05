@@ -153,13 +153,6 @@ pub struct Paths {
     pub releases: PathBuf,
     pub app_state: PathBuf,
     pub strict: bool,
-    pub authorized_keys: PathBuf,
-    pub ssh_config: PathBuf,
-    pub sudoers: PathBuf,
-    pub dedicated_ssh_config: PathBuf,
-    pub ssh_host_key: PathBuf,
-    pub ssh_host_public_key: PathBuf,
-    pub ssh_service: PathBuf,
 }
 impl Default for Paths {
     fn default() -> Self {
@@ -188,13 +181,6 @@ impl Paths {
             app_state: root.join("var/lib/celld"),
             state,
             strict,
-            authorized_keys: root.join("etc/ssh/cella-deploy/authorized_keys"),
-            ssh_config: root.join("etc/ssh/sshd_config.d/60-cella-deploy.conf"),
-            sudoers: root.join("etc/sudoers.d/cella-deploy"),
-            dedicated_ssh_config: root.join("etc/celld-ctl/sshd_config"),
-            ssh_host_key: root.join("etc/celld-ctl/ssh-host-ed25519-key"),
-            ssh_host_public_key: root.join("etc/celld-ctl/ssh-host-ed25519-key.pub"),
-            ssh_service: root.join("etc/systemd/system/cella-sshd.service"),
         }
     }
     pub fn check_file(&self, path: &Path, private: bool) -> Result<()> {

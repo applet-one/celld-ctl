@@ -1,19 +1,10 @@
-//! Forced-command entry point: no paths, hostnames, executables or arbitrary commands.
+//! Owner SSH transport entry point: no paths, hostnames or arbitrary commands in input.
 use anyhow::{ensure, Context, Result};
 use celld_ctl_core::{
     PreparedBundle, Request, Response, MAX_BUNDLE_BYTES, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
-    SSH_COMMAND,
 };
 use std::io::Write;
 
-pub fn validate_original_command(value: Option<&str>) -> Result<()> {
-    // Absence is useful to the local root operator. An SSH session always has a value.
-    ensure!(
-        value.is_none() || value == Some(SSH_COMMAND),
-        "SSH command rejected; use the fixed celld-ctl-transport command"
-    );
-    Ok(())
-}
 pub fn parse_request(bytes: &[u8]) -> Result<Request> {
     ensure!(
         !bytes.is_empty() && bytes.len() <= MAX_REQUEST_BYTES,

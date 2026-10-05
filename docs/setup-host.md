@@ -2,8 +2,8 @@
 
 **Run these steps on the Linux VM/server, using its administrator account.**
 Developers follow [B. Set up cella on your dev machine](setup-cella.md) afterward.
-Only the host operator controls object storage; developers need only restricted
-SSH access and their existing Worker project. The local path generates its own
+Only the host operator controls object storage; the VM owner needs only existing exe.dev
+SSH access and their Worker project. The local path generates its own
 host credentials and bucket; the external path requires operator configuration.
 
 On a **fresh x86_64** single-node development/testing host, the no-flag
@@ -21,8 +21,9 @@ replacing its Caddy configuration or moving its fleet prefix.
 
 ## A1. Install prerequisites and celld-ctl
 
-You need Linux with systemd, a Rust toolchain, Caddy, OpenSSH server/client,
-Python 3, curl, gzip, and administrator/sudo access. On a **fresh x86_64**
+You need an exe.dev Linux VM with systemd, a Rust toolchain, Caddy,
+Python 3, curl, gzip, and administrator/sudo access through the existing
+exe.dev SSH gateway. On a **fresh x86_64**
 host, from this repository:
 
 ```sh
@@ -30,10 +31,10 @@ cargo build --release --locked -p celld-ctl
 sudo scripts/install-host.sh
 ```
 
-The installer creates the runtime/publisher/deployment accounts and starts a
-separate deployment-only SSH service, `cella-sshd`, on **127.0.0.1:2222**.
-It leaves your existing administrator/platform SSH service untouched and does
-not join a private network or enroll developer keys. On a **fresh x86_64**
+The installer creates the runtime and publisher accounts; it uses your
+existing exe.dev owner SSH command path for deployments. It does **not**
+install a deployment SSH daemon, relay, tailnet or separate deploy account/key.
+It leaves exe.dev gateway access untouched. On a **fresh x86_64**
 host, no flag selects local RustFS and needs no cloud bucket or storage-secret
 setup; `--storage external` instead selects manual external configuration in
 A3. On a **fresh arm64/aarch64** host, no flag is accepted until native arm64
@@ -100,15 +101,16 @@ local S3 listener must remain loopback-only and the console disabled. The
 shared generated credential pair is an administrative RustFS credential,
 **not** per-app IAM isolation.
 
-Reinstallation must preserve RustFS data, credentials, registry, app pins,
-deployment keys and SSH server identity; inconsistent or unknown state must
-stop installation rather than be overwritten. The default is for **fresh
+Reinstallation must preserve RustFS data, credentials, registry, app pins and
+application state; inconsistent or unknown state must stop installation rather
+than be overwritten. The default is for **fresh
 x86_64 hosts only**; it does not move existing external app targets. Local
 `celld-ctl backup` omits `/var/lib/rustfs` (authoritative application data).
 See [backup and recovery](operations.md#history-rollback-backups-and-capacity)
 before relying on this VM's storage volume. The
 [recorded container smoke](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
-verified a real restricted-SSH deployment and named-object state after app
+historically verified a restricted-SSH deployment (in the old transport
+configuration) and named-object state after app
 restart, RustFS restart and archiving **only** the local app cache. A
 controlled RustFS stop/restart made diagnose fail promptly and then recover;
 it did not test a VM, arm64, abrupt process kill, VM reboot, cold restore or
@@ -172,90 +174,44 @@ upstream HTTPS proxy private. This configuration trusts that proxy's forwarded
 headers; it is not a standalone public HTTPS installation. App routes and the
 read-only directory are generated when the manager publishes routes.
 
-## A5. Make deployment SSH reachable privately
+## A5. Use existing exe.dev owner SSH
 
-The dedicated listener is **loopback-only**, so the VM's ordinary hostname or
-HTTPS proxy does not automatically reach it. Arrange an approved private TCP
-path from developers/CI to `127.0.0.1:2222`.
+The VM owner deploys through the **same** exe.dev SSH destination they already
+use to administer this VM. From the owner's dev machine, `ssh YOUR_VM.exe.xyz`
+works normally; if not, exe.dev documents the fallback
+`ssh vm+YOUR_VM@vm.exe.xyz`. Register a new public owner key with the exe.dev
+account only if needed: `cat ~/.ssh/cella-owner.pub | ssh exe.dev ssh-key add`
+(run from a machine already authenticated to that account). See
+[B2–B4](setup-cella.md#b2-register-the-owners-public-key-with-exedev).
+There is no new port to expose: `cella` uses port **22** and the owner
+identity, not the app's HTTPS endpoint. No independently scoped developer or CI
+role is offered by this workflow. Never give your VM-owner credential to CI or
+untrusted users. Do not add or configure a second sshd, Tailscale or a relay.
 
-For **VM owners** with an existing administrator SSH login, an
-[SSH stdio relay](ssh-stdio-relay.md) provides a local-only path without Tailscale
-or SSH TCP forwarding. This reuses full administrator access; never distribute
-that credential to CI/developers.
+## A6. Confirm host owner access and identity
 
-For independently restricted developer/CI access, for example, install Tailscale
-separately, enroll the host and approved clients
-in your tailnet, restrict access policy to approved identities and this port,
-and run on the host:
-
-```sh
-sudo tailscale serve --bg --tcp=2222 tcp://127.0.0.1:2222
-sudo tailscale serve status
-```
-
-Use private Serve, not public Funnel. Tailnet setup is independent of SSH key
-authentication: clients need both network access and an enrolled deploy key.
-See [private transport operations](operations.md#private-remote-transport-connectivity).
-Do not give CI your VM-owner/root SSH key as a connectivity shortcut.
-
-## A6. Enroll each developer's PUBLIC deploy key
-
-The developer generates their key in **B2**, then sends you only the `.pub` file
-through an authenticated administrator channel. Install that public key on the
-host (example source path; do not use the private key):
+From the owner's **dev machine**, verify the working SSH destination and
+compare the VM host-key fingerprint with a trusted value before trusting it:
 
 ```sh
-sudo celld-deploy-key add developer-laptop /path/to/cella-deploy.pub --kind owner
-sudo celld-deploy-key list
+ssh -i "$HOME/.ssh/cella-owner" -o IdentitiesOnly=yes YOUR_VM.exe.xyz
+# Or when necessary:
+ssh -i "$HOME/.ssh/cella-owner" -o IdentitiesOnly=yes vm+YOUR_VM@vm.exe.xyz
 ```
 
-Use a separate key and label for CI:
-
-```sh
-sudo celld-deploy-key add ci-main /path/to/ci-deploy.pub --kind ci
-```
-
-The deployment account is **cella-deploy**, not your administrator account.
-Do not use `ssh-copy-id` or hand-edit its authorized keys: the management tool
-maintains the labels and restrictive options. The account has no interactive
-shell, SFTP, arbitrary commands, or forwarding. All enrolled keys are trusted
-fleet-wide publishers, **not** per-app access controls; `owner`/`ci` are labels,
-not different permission levels.
-
-To revoke a lost/retired key:
-
-```sh
-sudo celld-deploy-key revoke developer-laptop
-```
-
-Revocation blocks new connections. Terminate existing sessions separately if
-immediate revocation is required.
-
-## A7. Give the developer connection details and server identity
-
-There are two distinct key pairs: the developer's key authenticates **them**;
-the server's host key authenticates **this deployment service**.
-
-```sh
-sudo cat /etc/celld-ctl/ssh-host-ed25519-key.pub
-sudo ssh-keygen -lf /etc/celld-ctl/ssh-host-ed25519-key.pub
-```
-
-Send the developer, through a trusted channel:
-
-- The reachable **private deployment hostname/IP** from A5.
-- SSH port **2222** and username **cella-deploy**.
-- The dedicated server's public host key and its **SHA256 fingerprint**.
-- Confirmation that their public deploy key was enrolled in A6.
-- The application base URL behind your private HTTPS proxy.
-
-Do not send either private key or any storage credentials. The dedicated
-server's key may differ from the primary/platform SSH key on port 22.
+These are generic placeholders, not actual instance names. The public key
+fingerprint of your **client** key (`ssh-keygen -lf ~/.ssh/cella-owner.pub`)
+is not the VM's **host** fingerprint and is not the exe.dev account-gateway
+fingerprint. See the [client host-key procedure](setup-cella.md#b4-verify-the-vms-ssh-host-key).
+The owner account must run `sudo -n /usr/local/bin/celld-ctl transport` without
+a password. Ordinary owner SSH provides broad VM access; the fixed command used by `cella`
+limits its own request format, **not** what the owner credential can do through
+SSH. Host storage credentials remain root-only and outside the repository.
 
 ## Host readiness checklist
 
 ```sh
-sudo systemctl is-active caddy cella-sshd
+sudo systemctl is-active caddy
 sudo celld-ctl list
 sudo ss -ltnp
 # On local-storage hosts:
@@ -263,8 +219,8 @@ sudo systemctl is-active rustfs.service
 ```
 
 Confirm the pinned binary and root-only storage configuration exist; Caddy owns
-8000, deployment SSH is loopback 2222, and the private TCP path is reachable from
-the developer's machine. An empty app registry is normal before the first deploy.
+8000, and the exe.dev owner SSH gateway reaches the VM from
+the owner's dev machine. An empty app registry is normal before the first deploy.
 No manual `create`/`enable` is needed: `cella deploy` provisions and activates it.
 For local storage, verify the S3 listener is loopback-only on port 9000 and
 check the installer's native compatibility/readiness results; a running service

@@ -3,7 +3,7 @@ name = "cella"
 version = "0.2.0"
 edition = "2021"
 license = "MIT"
-description = "Local celld development and restricted SSH deployment client"
+description = "Local celld development and owner SSH deployment client"
 
 [dependencies]
 anyhow = "1"

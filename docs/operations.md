@@ -4,27 +4,27 @@ Start with **[A. Set up celld-ctl on the host](setup-host.md)**, then give
 developers **[B. Dev-machine setup](setup-cella.md)**. This page is the operator
 reference for lifecycle, migration, key management, backups and security.
 
-This is a single-host MVP, not a multi-tenant security boundary. All deploy keys
-are trusted fleet publishers; keys are not scoped to individual apps. The runtime
+This is a single-host MVP, not a multi-tenant security boundary. The VM-owner SSH credential has broad host privileges; there are no scoped
+deployment keys or independently authorized CI/developer publishers. The runtime
 uses celld's Worker isolation and a dedicated shared Unix service account. No
 browser management interface, inbound deployment HTTP API, or app-secret
 management is installed.
 
 ## Build and install
 
-On a fresh Linux x86_64 single-node development/testing system with systemd,
-Caddy, OpenSSH, Python 3 and a Rust toolchain:
+On a fresh exe.dev Linux x86_64 single-node development/testing VM with
+systemd, Caddy, Python 3 and a Rust toolchain:
 
 ```sh
 cargo build --release --locked
 sudo scripts/install-host.sh
 ```
 
-The installer installs binaries, the systemd template, bounded application
-journal namespace, a locked-down SSH deploy account, a separate loopback-only `cella-sshd` daemon
-on port `2222`, and its narrow sudo rule. The primary SSH service is untouched.
-It does **not** migrate existing application object data or app pins, join a
-private network or add deploy keys. Inspect templates and back up existing
+The installer installs binaries, the systemd app template and bounded app
+journal namespace. Deployments reuse the existing exe.dev VM-owner SSH gateway
+and non-interactive owner sudo; the installer does not set up another sshd,
+a deploy account/key, a relay, Tailscale, or change the primary SSH service.
+It does **not** migrate existing application object data or app pins. Inspect templates and back up existing
 configuration before installation. On a **fresh x86_64 host**, no flag installs
 single-node local RustFS, provisions its bucket and root-only credentials, and
 checks native storage readiness. `--storage local` selects it explicitly;
@@ -34,7 +34,7 @@ specify `--storage local` (not natively qualified on arm64) or
 `--storage external`. Reinstalling a configured host preserves its existing
 mode, registry targets, credentials and app pins; flags do not migrate object
 data. The [October 5, 2026 minimum live gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
-passed with real restricted-SSH deployment and cache-free named-object
+historically passed with the old restricted-SSH transport and cache-free named-object
 recovery in an x86_64 Ubuntu 24.04 **systemd Docker container**, not a VM.
 It does not qualify VM/arm64, abrupt process kills, cold restore, or HA.
 
@@ -51,7 +51,7 @@ For external setup, write only the node's storage credential variables to `/etc/
 root-owned mode `0600` (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional
 `AWS_SESSION_TOKEN`). The host uses these for native publication as well as
 serving. Developers and CI do not need storage credentials or bucket settings.
-Restricted transport targets contain only the slug, exact native version and
+Remote transport targets contain only the slug, exact native version and
 enabled flag; the root operator can still inspect full registry targets.
 
 Celld and internal/operator listeners bind to loopback. Only Caddy binds to
@@ -105,81 +105,74 @@ restart are operator actions, not available to deploy keys. Removal must never
 delete durable object-store data; retained local state should be archived or
 removed deliberately by the operator, not a remote developer.
 
-## Restricted deployment keys
+## Owner SSH transport and trust boundary
 
-Developers first generate a dedicated key on their own machine using
-[B2. Generate a deployment key](setup-cella.md#b2-generate-a-dedicated-deployment-key).
-Receive only the public `.pub` file through an authenticated administrator
-channel, then run the following **on the host**. Do not use `ssh-copy-id` or
-SFTP through the restricted account.
+The VM **owner** registers their public authentication key with the exe.dev
+account (not `celld-deploy-key` on the host), then uses the working direct SSH
+destination `YOUR_VM.exe.xyz` or fallback `vm+YOUR_VM@vm.exe.xyz` on port **22**.
+See [dev-machine setup](setup-cella.md) and exe.dev's
+[SSH destination](https://exe.dev/docs/faq/ssh-destination.md) and
+[ssh-key](https://exe.dev/docs/cli-ssh-key.md) docs. The local key's public
+fingerprint (`ssh-keygen -lf ~/.ssh/cella-owner.pub`) is distinct from the
+server host-key fingerprint verified in `known_hosts`. The published
+[exe.dev fingerprint](https://exe.dev/docs/faq/host-key.md) refers specifically
+to `ssh exe.dev`, not an asserted VM destination fingerprint.
 
-```sh
-sudo celld-deploy-key add owner-laptop /path/to/owner.pub --kind owner
-sudo celld-deploy-key add ci-main /path/to/ci.pub --kind ci
-sudo celld-deploy-key list
-sudo celld-deploy-key revoke ci-main
-```
+`cella` invokes batch SSH with `-F /dev/null`, explicit `-i`,
+`IdentitiesOnly=yes`, strict host-key checking, no TTY or forwarding, and the fixed command
+`sudo -n /usr/local/bin/celld-ctl transport`. The owner account must already
+have **passwordless sudo** for this command; exe.dev VM owner accounts may have
+broader sudo access. A passphrase-protected key may be preloaded into the local
+agent; the agent is not forwarded. `celld-ctl transport` requires root, accepts
+`transport` with no extra argv and bounds the stdin request. No remote parameter in
+the protocol selects a storage bucket, host path or executable. The transport
+allowlist is provision, target, deploy, activate, status, logs and deployments.
+Only root-held host storage credentials are used during publication.
 
-Only public keys are installed. Private keys remain on the developer machine or
-in CI. Root-owned authorized keys carry `restrict`, and sshd independently
-forces the fixed transport and disables shell commands, TTYs, forwarding,
-tunnels and user startup scripts. The account's `/bin/sh` exists only so sshd
-can launch its forced command; it does not grant an interactive shell.
+**This is not a restricted SSH principal.** The owner can use ordinary SSH to
+run other VM commands, and the account's sudo authority is independent of
+`cella`'s narrow wire format. Do not give VM-owner SSH keys to CI, other
+developers or untrusted parties. There is no independently scoped CI deploy
+role, fleet key revocation inventory or dedicated deployment port. Revocation
+of a compromised owner key belongs to the exe.dev account; use
+`ssh exe.dev ssh-key list` / `ssh exe.dev ssh-key remove ...`, and consider
+existing sessions and other owner keys. Avoid altering the platform-managed
+SSH service or opening internal celld/RustFS ports.
 
-`sudo` allows exactly `/usr/local/bin/celld-ctl transport`, not arbitrary host
-commands or configurable paths. Ordinary requests are bounded JSON; deploy
-adds a size-declared prepared-package body with independent bounds. The transport
-rejects extra fields/unknown operations. Its allowlist is provision, target, deploy,
-activate, status, logs and deployments. Deployers cannot choose storage endpoints,
-buckets, host paths, build executables or environment variables. Authentication is SSH public-key
-possession. CI should have a distinct revocable key, not a copy of the owner's.
-Revocation blocks new SSH authentication; terminate existing deploy-account
-sessions explicitly when immediate revocation is required.
+## Existing-host migration from dedicated deployment SSH
 
-## Private remote transport connectivity
+**For hosts previously installed with the old `cella-sshd` workflow only.**
+Take a [host backup](#history-rollback-backups-and-capacity) and preserve it
+off-host before cleanup. Reinstall the current host binaries, verify direct
+owner SSH and `sudo -n /usr/local/bin/celld-ctl transport`, then test a
+non-mutating `cella status` with the new CLI. The new installer does not remove
+old managed SSH artifacts and does not touch exe.dev's primary gateway. Do not
+delete the only working access path until owner access is verified.
 
-The dedicated SSH service binds **only** `127.0.0.1:2222`. Local transport tests
-are not proof of connectivity from a developer's laptop. Ordinary HTTP proxies
-cannot carry raw SSH, and some VM platforms manage their own primary SSH daemon;
-installing a Match block into a dormant system sshd does not restrict that
-platform-managed access. Do not give CI a VM-owner/root access key as a shortcut.
-
-VM owners can alternatively use an [SSH stdio relay](ssh-stdio-relay.md)
-through their existing administrator login. This needs no Tailscale and does
-not request SSH TCP forwarding; it is not a replacement for separately scoped
-CI/developer connectivity because the outer credential still grants admin access.
-
-Provide an independent private TCP path, for example by enrolling the VM and
-approved developer/CI devices into your tailnet, then forwarding only this SSH
-service with Tailscale Serve (not public Funnel):
-
-```sh
-sudo tailscale serve --bg --tcp=2222 tcp://127.0.0.1:2222
-# From an approved tailnet client:
-export CELLA_HOST=cella-deploy@TAILNET_HOST
-export CELLA_SSH_PORT=2222
-export CELLA_SSH_KEY=/path/to/restricted-deploy-key
-cella deploy
-```
-
-Follow the [official Serve TCP documentation](https://tailscale.com/docs/reference/tailscale-cli/serve)
-and restrict tailnet policy to approved owner/CI identities and this port. Tailnet
-enrollment/credentials and ACL policy are operator instance state, never source
-artifacts; the installer does not join an account automatically. No celld
-serving/internal port is forwarded. The HTTPS application proxy remains private.
-
-Enroll the dedicated server's public host key in the client's `known_hosts`
-after comparing its fingerprint through a trusted operator channel:
+Once owner deployment works, on the VM stop and disable only the *old dedicated*
+service, inspect then remove its known managed artifacts if present:
 
 ```sh
-sudo ssh-keygen -lf /etc/celld-ctl/ssh-host-ed25519-key.pub
+sudo systemctl disable --now cella-sshd.service
+sudo rm -f /etc/systemd/system/cella-sshd.service \
+  /etc/celld-ctl/sshd_config \
+  /etc/celld-ctl/ssh-host-ed25519-key /etc/celld-ctl/ssh-host-ed25519-key.pub \
+  /etc/sudoers.d/cella-deploy \
+  /etc/ssh/sshd_config.d/60-cella-deploy.conf
+sudo systemctl daemon-reload
 ```
 
-`cella` deliberately uses strict host-key verification. Its SSH port defaults to
-22 for ordinary SSH environments; use `--ssh-port 2222` or `CELLA_SSH_PORT=2222`
-for this installed daemon. The old `cella-deploy.conf` is an optional legacy
-Match fragment for operators with a conventional primary OpenSSH service; the
-installer no longer installs it or reloads the primary SSH service.
+The old installation may also contain `/etc/ssh/cella-deploy/authorized_keys`,
+`/var/empty/cella-deploy`, `/usr/local/bin/celld-deploy-key`, and the
+`cella-deploy` system account. Confirm those are unused by anything else
+before deleting the files/helper/account manually.
+Remove obsolete local relays/port forwards and stale `known_hosts` entries for
+`[OLD_DEPLOY_HOST]:2222` **only after verifying what each entry is**. Remove
+old `CELLA_HOST=cella-deploy@...`, `CELLA_SSH_PORT=2222` and `CELLA_SSH_KEY`
+settings from profiles/CI; replace them with owner destination and registered
+owner key in the private dev-machine environment. Do not delete app registry,
+object data, storage credentials, app units, the real SSH service, or backups.
+Re-running the installer is not a reset or an automatic cleanup/migration.
 
 ## Counter migration
 
@@ -203,7 +196,7 @@ revision. Roll back by checking out the chosen prior Git revision and running
 `cella deploy`; this uses the same pinned native parser and deployment engine.
 This does not revert Durable Object data/schema migrations.
 
-Back up the registry and root-only configuration and dedicated SSH server identity with `sudo celld-ctl backup`
+Back up the registry and root-only configuration with `sudo celld-ctl backup`
 (the destination is under `/var/lib/celld-ctl/backups`) and store the result securely off-host. Only snapshots with a `COMPLETE` marker
 are complete; configuration, app environments and units have separate subdirectories. Registry/config backups contain
 node credentials; they are not public artifacts. Object-store durability does
@@ -232,8 +225,8 @@ an outage workaround.
 
 For an **optional cold snapshot**, block deployments and other writers, stop
 affected app services, then stop RustFS. Capture its data directory, RustFS
-service environment, registry, host config, node credentials, deployment SSH
-identity and installed-version metadata, preserving ownership and permissions.
+service environment, registry, host config, node credentials and
+installed-version metadata, preserving ownership and permissions.
 Copy the snapshot off-host if VM loss is in scope. Restart RustFS first, check
 readiness, then start apps and reopen deployments. Do **not** treat a live
 recursive copy of RustFS's files as a consistent backup. Restore only onto an
@@ -281,19 +274,19 @@ slugs and measure cgroup/host resources concurrently. A small two-app smoke test
 is not capacity qualification, and synthetic counter traffic is not necessarily
 representative of your workload.
 
-After enrolling a deploy key, use the real, non-mutating SSH policy probe:
+After host installation, verify direct owner login and non-interactive sudo,
+then use a read-only client command:
 
 ```sh
-python3 scripts/check-ssh-policy.py --host cella-deploy@HOST \
-  --identity /path/to/key --port 2222 --slug APP_SLUG
+ssh -i "$HOME/.ssh/cella-owner" -o IdentitiesOnly=yes YOUR_VM.exe.xyz \
+  'sudo -n /usr/local/bin/celld-ctl list'
+CELLA_HOST=YOUR_VM.exe.xyz CELLA_SSH_KEY="$HOME/.ssh/cella-owner" \
+  cella --slug APP_SLUG status
 ```
 
-It first requires a successful read-only status operation, then checks rejected
-shell/extra commands, unsupported operations, injected paths/slugs, oversized
-requests and TCP forwarding. Do not confuse a failed connection with a passed
-policy check. Key revocation can be verified by retrying a **new** connection
-after revoking its label; existing sessions need separate termination if immediate
-revocation is required.
+An unknown app from `status` is expected before its first deploy. `list` is an
+operator check, not the deployment protocol. Neither test proves least-privilege
+owner access: the owner account still has broad VM authority.
 
 ## Host-side publication
 

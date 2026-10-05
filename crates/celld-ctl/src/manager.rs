@@ -497,7 +497,7 @@ impl<R: Runtime> Manager<R> {
             dest.join("registry.sqlite"),
             fs::Permissions::from_mode(0o600),
         )?;
-        for directory in ["config", "cells", "units", "ssh"] {
+        for directory in ["config", "cells", "units"] {
             self.paths.make_dir(&dest.join(directory), 0o700)?;
         }
         let mut files = vec![
@@ -512,22 +512,6 @@ impl<R: Runtime> Manager<R> {
         ];
         if self.paths.caddy.exists() {
             files.push((self.paths.caddy.clone(), PathBuf::from("config/Caddyfile")));
-        }
-        for (source, name) in [
-            (&self.paths.authorized_keys, "ssh/authorized_keys"),
-            (&self.paths.ssh_config, "ssh/60-cella-deploy.conf"),
-            (&self.paths.sudoers, "ssh/cella-deploy.sudoers"),
-            (&self.paths.dedicated_ssh_config, "ssh/sshd_config"),
-            (&self.paths.ssh_host_key, "ssh/ssh-host-ed25519-key"),
-            (
-                &self.paths.ssh_host_public_key,
-                "ssh/ssh-host-ed25519-key.pub",
-            ),
-            (&self.paths.ssh_service, "units/cella-sshd.service"),
-        ] {
-            if source.exists() {
-                files.push((source.clone(), PathBuf::from(name)));
-            }
         }
         let apps = self.registry.list()?;
         for app in &apps {
@@ -555,9 +539,7 @@ impl<R: Runtime> Manager<R> {
         for (source, name) in files {
             self.paths.check_file(
                 &source,
-                source == self.paths.credentials
-                    || source == self.paths.config
-                    || source == self.paths.ssh_host_key,
+                source == self.paths.credentials || source == self.paths.config,
             )?;
             let data = fs::read(source)?;
             atomic_write(&self.paths, &dest.join(name), &data, 0o600)?;

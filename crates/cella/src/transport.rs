@@ -33,7 +33,7 @@ impl Ssh {
             || !self
                 .host
                 .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"._@:-[]".contains(&b))
+                .all(|b| b.is_ascii_alphanumeric() || b"._@:+-[]".contains(&b))
         {
             bail!("invalid SSH host: supply a literal hostname or user@hostname, not SSH options");
         }
@@ -41,19 +41,22 @@ impl Ssh {
             bail!("SSH port must be nonzero");
         }
         let mut cmd = Command::new("ssh");
-        // Ignore user ssh_config: SendEnv/SetEnv/ProxyCommand/LocalCommand must not
-        // turn this narrow transport into credential forwarding or shell execution.
+        // Ignore user ssh_config: ProxyCommand/LocalCommand/SendEnv must not
+        // replace this gateway connection or forward ambient credentials.
         cmd.env_clear();
         for key in ["PATH", "HOME", "LANG"] {
             if let Some(value) = std::env::var_os(key) {
                 cmd.env(key, value);
             }
         }
+        // The selected key may be unlocked in a local agent; never forward it.
+        if let Some(socket) = std::env::var_os("SSH_AUTH_SOCK") {
+            cmd.env("SSH_AUTH_SOCK", socket);
+        }
         cmd.args(["-F", "/dev/null", "-T", "-a", "-x"]);
         for option in [
             "BatchMode=yes",
             "IdentitiesOnly=yes",
-            "IdentityAgent=none",
             "ForwardAgent=no",
             "ForwardX11=no",
             "ClearAllForwardings=yes",
@@ -72,7 +75,7 @@ impl Ssh {
             .arg(self.port.to_string())
             .arg("--")
             .arg(&self.host)
-            .arg("celld-ctl-transport");
+            .arg(celld_ctl_core::SSH_COMMAND);
         Ok(cmd)
     }
 
@@ -104,7 +107,7 @@ impl Ssh {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
-            .context("start restricted SSH transport")?;
+            .context("start owner SSH transport")?;
         let mut stdin = child.stdin.take().context("SSH stdin unavailable")?;
         let stdout = child.stdout.take().context("SSH stdout unavailable")?;
         // Read concurrently: a host can reject the header before consuming a large
@@ -193,9 +196,9 @@ mod tests {
         }
     }
     #[test]
-    fn restricted_ssh_and_json_only() {
+    fn owner_ssh_and_json_only() {
         let ssh = Ssh {
-            host: "cella-deploy@example.invalid".into(),
+            host: "vm+sample@exe.dev".into(),
             identity: "/tmp/key".into(),
             port: 22,
         };
@@ -211,11 +214,14 @@ mod tests {
             "BatchMode=yes",
             "ClearAllForwardings=yes",
             "StrictHostKeyChecking=yes",
-            "IdentityAgent=none",
+            "IdentitiesOnly=yes",
+            "ForwardAgent=no",
         ] {
             assert!(args.contains(&arg.to_string()));
         }
-        assert_eq!(args.last().unwrap(), "celld-ctl-transport");
+        assert_eq!(args.last().unwrap(), celld_ctl_core::SSH_COMMAND);
+        assert!(args.windows(2).any(|pair| pair == ["-i", "/tmp/key"]));
+        assert!(args.windows(2).any(|pair| pair == ["-p", "22"]));
         assert!(!args.iter().any(|arg| arg.contains("AWS_")));
         let json = serde_json::to_value(Request::Deploy {
             slug: "app".into(),

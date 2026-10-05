@@ -177,10 +177,7 @@ class Policy(unittest.TestCase):
             self.assertEqual([call.args[1] for call in releases.call_args_list],
                              ['celld', 'rustfs'])
             caddy.assert_called_once()
-            self.assertFalse(any(call.args[:3] == ('systemctl', 'reload', 'cella-sshd')
-                                 for call in commands.call_args_list))
-            self.assertTrue(any(call.args[:4] == ('systemctl', 'is-active', '--quiet', 'cella-sshd')
-                                for call in commands.call_args_list))
+            self.assertFalse(any('cella-sshd' in call.args for call in commands.call_args_list))
             commands.reset_mock()
             local.reset_mock()
             components.reset_mock()
@@ -193,10 +190,9 @@ class Policy(unittest.TestCase):
             self.assertFalse(any(call.args[:3] == ('systemctl', 'is-active', '--quiet')
                                  and call.args[3] == 'rustfs'
                                  for call in commands.call_args_list))
-            self.assertFalse(any(call.args[:3] == ('systemctl', 'reload', 'cella-sshd')
-                                 for call in commands.call_args_list))
+            self.assertFalse(any('cella-sshd' in call.args for call in commands.call_args_list))
 
-    def test_existing_external_reinstall_restarts_deploy_ssh_without_hup(self):
+    def test_existing_external_reinstall_does_not_touch_primary_ssh(self):
         self.put(self.config, json.dumps({'endpoint': 'https://example.com',
                                           'bucket': 's3://existing', 'celld_version': '0.6.1'}))
         self.put(self.node, 'AWS_ACCESS_KEY_ID=xyz\nAWS_SECRET_ACCESS_KEY=operator\n')
@@ -208,10 +204,8 @@ class Policy(unittest.TestCase):
              patch.object(i, 'install_components'), patch.object(i, 'run',
                                                                   side_effect=fake_run) as commands:
             i.install(None)
-        self.assertTrue(any(call.args[:3] == ('systemctl', 'restart', 'cella-sshd')
-                            for call in commands.call_args_list))
-        self.assertFalse(any(call.args[:3] == ('systemctl', 'reload', 'cella-sshd')
-                             for call in commands.call_args_list))
+        self.assertFalse(any('ssh' in str(arg) for call in commands.call_args_list
+                             for arg in call.args))
 
     def test_fake_installer_rejects_conflicting_port_before_install(self):
         self.put(self.config, json.dumps(self.local))

@@ -295,7 +295,7 @@ def main():
     os.umask(0o077)
     require(sys.platform == 'linux' and platform.machine() in ('x86_64', 'aarch64'),
             'Supported hosts: Linux x86_64 and aarch64')
-    for tool in ('curl', 'systemctl', 'sshd', 'ssh-keygen', 'useradd', 'getent', 'visudo', 'caddy'):
+    for tool in ('curl', 'systemctl', 'useradd', 'getent', 'caddy'):
         require(shutil.which(tool) is not None, f'Missing prerequisite: {tool}')
     require((REPO / 'target/release/celld-ctl').is_file(),
             'Build first: cargo build --release --locked -p celld-ctl')
@@ -313,19 +313,11 @@ def install(requested):
     # No changes to the host until all classified paths have been inspected.
     for p in (STATE, CONFIG, NODE_ENV, RUSTFS_ENV, RUSTFS_DATA, RUSTFS_UNIT,
               CELLD_RELEASES, RUSTFS_RELEASES, CADDY, REGISTRY,
-              Path('/etc/celld-ctl/ssh-host-ed25519-key'),
-              Path('/etc/celld-ctl/ssh-host-ed25519-key.pub'),
-              Path('/etc/ssh/cella-deploy/authorized_keys'),
               Path('/usr/local/bin/celld-ctl'), Path('/usr/local/libexec/celld-run'),
-              Path('/usr/local/sbin/celld-deploy-key'),
               Path('/etc/systemd/system/celld-cell@.service'),
-              Path('/etc/celld-ctl/sshd_config'),
-              Path('/etc/systemd/system/cella-sshd.service'),
               Path('/etc/systemd/journald@celld.conf.d/limits.conf'),
-              Path('/etc/sudoers.d/cella-deploy'),
               Path('/var/lib/celld-ctl/public/index.html')):
-        safe_path(p, secret=p in (STATE, CONFIG, NODE_ENV, RUSTFS_ENV,
-                                   Path('/etc/celld-ctl/ssh-host-ed25519-key')),
+        safe_path(p, secret=p in (STATE, CONFIG, NODE_ENV, RUSTFS_ENV),
                   owner=__import__('pwd').getpwnam('rustfs').pw_uid if p == RUSTFS_DATA
                   and shutil.which('getent') and run('getent', 'passwd', 'rustfs', stdout=subprocess.DEVNULL, check=False).returncode == 0 else 0)
     existing, info = classify(CONFIG, STATE, NODE_ENV, RUSTFS_ENV)
@@ -375,27 +367,19 @@ def install(requested):
         if existing == 'fresh':
             init_caddy()
         run('systemctl', 'daemon-reload')
-        run('systemctl', 'enable', '--now', 'cella-sshd')
-        # HUP immediately after a fresh sshd start can cause it to exit cleanly
-        # after systemctl has reported a successful reload. On a reinstall the
-        # unit/config might have changed, so restart rather than racing a HUP.
-        if existing != 'fresh':
-            run('systemctl', 'restart', 'cella-sshd')
-        run('systemctl', 'is-active', '--quiet', 'cella-sshd')
-    print('Deployment SSH listens at 127.0.0.1:2222. Arrange private access and enroll public deploy keys.')
+    print('Host ready. Connect using your existing administrator SSH access.')
 
 
 def install_components():
     for user, opts in (
         ('celld', ['--system', '--home-dir', '/var/lib/celld', '--shell', '/usr/sbin/nologin']),
         ('celld-publish', ['--system', '--user-group', '--home-dir', '/var/empty/celld-publish', '--shell', '/usr/sbin/nologin']),
-        ('cella-deploy', ['--system', '--home-dir', '/var/empty/cella-deploy', '--shell', '/bin/sh']),
     ):
         if run('getent', 'passwd', user, stdout=subprocess.DEVNULL, check=False).returncode:
             run('useradd', *opts, user)
     for path, mode, group in (
-        ('/var/empty/cella-deploy', 0o755, 'root'), ('/var/empty/celld-publish', 0o755, 'root'),
-        ('/etc/ssh/cella-deploy', 0o755, 'root'), ('/etc/celld-ctl', 0o700, 'root'),
+        ('/var/empty/celld-publish', 0o755, 'root'),
+        ('/etc/celld-ctl', 0o700, 'root'),
         ('/etc/celld/cells', 0o700, 'root'), ('/var/backups/celld-ctl', 0o700, 'root'),
         ('/var/lib/celld', 0o755, 'root'), ('/var/lib/celld-ctl', 0o755, 'root'),
         ('/var/lib/celld-ctl/public', 0o755, 'root'),
@@ -407,31 +391,13 @@ def install_components():
     for src, dest, mode in (
         ('target/release/celld-ctl', '/usr/local/bin/celld-ctl', 0o755),
         ('scripts/celld-run', '/usr/local/libexec/celld-run', 0o755),
-        ('scripts/celld-deploy-key', '/usr/local/sbin/celld-deploy-key', 0o755),
         ('examples/systemd/celld-cell@.service', '/etc/systemd/system/celld-cell@.service', 0o644),
-        ('examples/ssh/sshd_config', '/etc/celld-ctl/sshd_config', 0o600),
-        ('examples/systemd/cella-sshd.service', '/etc/systemd/system/cella-sshd.service', 0o644),
         ('examples/systemd/journal-limits.conf', '/etc/systemd/journald@celld.conf.d/limits.conf', 0o644),
     ):
         copy_template(REPO / src, Path(dest), mode)
-    key = Path('/etc/celld-ctl/ssh-host-ed25519-key')
-    if not is_present(key):
-        run('ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C', 'cella transport host', '-f', str(key))
-    run('chown', 'root:root', str(key))
-    key.chmod(0o600)
-    run('visudo', '-cf', str(REPO / 'examples/ssh/cella-deploy.sudoers'))
-    copy_template(REPO / 'examples/ssh/cella-deploy.sudoers', Path('/etc/sudoers.d/cella-deploy'), 0o440)
-    auth = Path('/etc/ssh/cella-deploy/authorized_keys')
-    if not is_present(auth):
-        auth.touch(mode=0o644, exist_ok=False)
-    run('chown', 'root:root', str(auth))
-    auth.chmod(0o644)
     index = Path('/var/lib/celld-ctl/public/index.html')
     if not is_present(index):
         copy_new(REPO / 'examples/caddy/index.html', index, 0o644)
-    mkdir(Path('/run/sshd'))
-    run('/usr/sbin/sshd', '-t', '-f', '/etc/celld-ctl/sshd_config')
-
 
 def local_install(existing, source, dest):
     if run('getent', 'passwd', 'rustfs', stdout=subprocess.DEVNULL, check=False).returncode:

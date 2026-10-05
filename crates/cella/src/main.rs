@@ -10,10 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 #[derive(Parser)]
-#[command(
-    version,
-    about = "Local celld development and restricted SSH deployments"
-)]
+#[command(version, about = "Local celld development and owner SSH deployments")]
 struct Cli {
     /// Wrangler project directory or configuration file (never rewritten).
     #[arg(long, global = true, default_value = ".")]
@@ -21,10 +18,10 @@ struct Cli {
     /// Override hosted routing slug, not the native Worker name.
     #[arg(long, global = true)]
     slug: Option<String>,
-    /// Explicit SSH destination, normally cella-deploy@HOST (no ssh_config aliases).
+    /// Existing owner SSH destination, e.g. vm+NAME@exe.dev (no ssh_config aliases).
     #[arg(long, global = true, env = "CELLA_HOST")]
     host: Option<String>,
-    /// Dedicated restricted deploy private key; not read from Wrangler config.
+    /// Explicit owner SSH private key registered with exe.dev.
     #[arg(long, global = true, env = "CELLA_SSH_KEY")]
     identity: Option<PathBuf>,
     #[arg(long, global = true, env = "CELLA_SSH_PORT", default_value_t = 22)]
@@ -76,7 +73,7 @@ impl Cli {
             identity: self
                 .identity
                 .clone()
-                .context("set --identity or CELLA_SSH_KEY to a dedicated restricted SSH key")?,
+                .context("set --identity or CELLA_SSH_KEY to your exe.dev owner SSH key")?,
             port: self.ssh_port,
         })
     }

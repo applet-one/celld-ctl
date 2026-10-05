@@ -1,13 +1,13 @@
-# cella: local development and SSH-only deployment
+# cella: local development and owner SSH deployment
 
 First complete **[A. Host setup](setup-host.md)**, then follow
 **[B. Configure cella on your dev machine](setup-cella.md)**. B includes generating
-a dedicated SSH key, operator enrollment and verified `known_hosts` setup. This
+an exe.dev-registered owner key and verified VM `known_hosts` setup. This
 page is the detailed client/protocol reference, not the onboarding checklist.
 
 `cella` is the developer client, separate from the host/operator `celld-ctl`.
 Keep your existing `wrangler.jsonc` (or `wrangler.json`). **Deployment requires
-only the restricted SSH connection: no local host object-store credentials, bucket name,
+only the existing exe.dev owner SSH connection: no local host object-store credentials, bucket name,
 endpoint, or region.** Both client and host must use version 0.2.0 or later;
 the original 0.1 client used direct-to-object-store publication.
 
@@ -25,34 +25,39 @@ Node.js and your project's npm/pnpm/Yarn dependencies, including esbuild when
 bundling is required. `cella` does not run package installs. `curl` is required
 for exact native release downloads, and OpenSSH for remote operations.
 
-## Configure SSH once
+## Configure owner SSH once
 
-If you have not created/enrolled a key and verified the server identity, follow
-[B2–B4](setup-cella.md#b2-generate-a-dedicated-deployment-key) first.
+Follow [B2–B4](setup-cella.md#b2-register-the-owners-public-key-with-exedev)
+for key registration, the working exe.dev VM destination and VM host-key
+fingerprint verification. On your dev machine:
 
 ```sh
-export CELLA_HOST=cella-deploy@PRIVATE_HOST
-export CELLA_SSH_PORT=2222
-export CELLA_SSH_KEY="$HOME/.ssh/cella-deploy"
+export CELLA_HOST=YOUR_VM.exe.xyz
+# If needed: export CELLA_HOST=vm+YOUR_VM@vm.exe.xyz
+export CELLA_SSH_KEY="$HOME/.ssh/cella-owner"
 ```
 
-Equivalent flags are `--host`, `--ssh-port`, `--identity`. Use a dedicated
-restricted key enrolled by the host operator; CI should have a distinct,
-independently revocable key. Private keys stay on your machine or CI runner.
-The batch client does not use an agent or prompt for key passphrases.
+Port 22 is the default. Flags are `--host`, `--identity` and `--ssh-port`.
+Use a literal working SSH destination, not a config alias: the client passes
+`-F /dev/null` and disables PTY, forwarding, multiplexing and local commands.
+Its batch SSH specifies the owner private key with `-i` and `IdentitiesOnly=yes`;
+it cannot prompt to unlock encrypted keys. Prefer a passphrase-protected key
+unlocked beforehand using `ssh-add "$CELLA_SSH_KEY"`, or use an empty-passphrase
+key with careful file protection. The local agent may authenticate, but is
+never forwarded to the VM; host storage credentials are never forwarded either.
+SSH host-key checking is strict; verify the **VM** host fingerprint before
+trusting it in `known_hosts`.
+The public key registered with exe.dev authenticates the owner; no
+`celld-deploy-key` enrollment is needed on the VM.
 
-Supply a real hostname, not an alias requiring `~/.ssh/config`: client SSH uses
-`-F /dev/null`. Host-key verification is strict; enroll the dedicated server's
-key in `known_hosts` after checking its fingerprint through a trusted channel.
-The client disables PTY, agent/X11/port forwarding, multiplexing and local
-commands. It sends only the fixed command `celld-ctl-transport`; parameters and
-prepared files are data on stdin, never shell commands. SSH inherits only
-`PATH`, `HOME`, `LANG`, not AWS credentials or agent state.
-
-The bundled host daemon listens only on `127.0.0.1:2222`. Remote machines need
-an approved private TCP access path; normal platform/VM-owner SSH is not the
-restricted deployment account. See [host operations](operations.md#private-remote-transport-connectivity).
-The client's default port remains 22 for conventional SSH installations.
+`cella` sends only the fixed remote command
+`sudo -n /usr/local/bin/celld-ctl transport` through owner SSH; parameters
+and prepared files are data on stdin, not shell commands. The owner needs
+passwordless sudo for that command. That is a client
+protocol guard, **not an SSH authorization boundary**: the same owner SSH
+identity can run arbitrary VM commands. Never distribute it to CI/untrusted
+users. There is no dedicated SSH listener, port-forwarding, relay or tailnet
+requirement.
 
 ## Deploy
 
@@ -62,7 +67,7 @@ From your existing Wrangler project:
 cella deploy
 cella --project ./my-project deploy
 cella --slug alternate-route deploy
-cella deploy --source-revision COMMIT_SHA  # useful in CI
+cella deploy --source-revision COMMIT_SHA  # explicit source label
 ```
 
 1. Extract the Worker name as the hosted slug (or use `--slug`) and ask the

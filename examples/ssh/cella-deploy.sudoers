@@ -1,3 +1,0 @@
-# This is the only privileged operation granted to deploy users.
-Defaults:cella-deploy env_keep += "SSH_ORIGINAL_COMMAND"
-cella-deploy ALL=(root) NOPASSWD: /usr/local/bin/celld-ctl transport

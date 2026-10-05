@@ -1,5 +1,12 @@
 # Plan: default local RustFS storage for development hosts
 
+**Historical storage plan (October 5, 2026):** The transport and SSH
+instructions below describe the **old dedicated deployment SSH workflow**, not
+the current owner-only exe.dev gateway. Preserve Section 7 as dated evidence
+of storage behavior, not a test of current SSH policy. For current deployment
+and old-service cleanup see [host setup](setup-host.md) and
+[operations](operations.md#existing-host-migration-from-dedicated-deployment-ssh).
+
 **Status, October 5, 2026:** the core live release smoke passed on a disposable
 x86_64 Ubuntu 24.04 systemd **Docker container**, including restricted-SSH
 deploy and cache-free named Durable Object recovery. The installer now defaults
@@ -16,8 +23,8 @@ celld-ctl development/testing hosts**. Keep external S3-compatible storage as an
 explicit opt-in. Preserve existing host configurations on reinstall.
 
 The primary user-facing goal is that `README.md` → `## Set up the host` needs
-only clone/build/install commands and a link for prerequisites and private SSH
-connectivity. It must not ask the user to create an external bucket, obtain
+only clone/build/install commands and a link for prerequisites and owner SSH
+setup. It must not ask the user to create an external bucket, obtain
 cloud credentials, or edit storage settings.
 
 This is not a production HA design. Persistent local data should survive normal
@@ -60,19 +67,19 @@ cargo build --release --locked -p celld-ctl
 sudo scripts/install-host.sh
 ```
 
-The installer should leave the host ready for public-key enrollment and the
-first `cella deploy`, including:
+The installer should leave the host ready for the owner's existing exe.dev
+SSH and the first `cella deploy`, including:
 
-1. Existing runtime/publisher/deployment accounts and dedicated SSH service.
+1. Runtime and publisher accounts; no dedicated deployment SSH service.
 2. The exact native celld release required by the generated host configuration.
 3. RustFS running privately, with a persistent data directory and usable bucket.
 4. Root-only host configuration and storage credentials already populated.
 5. Initial Caddy configuration on a fresh host, with Caddy running.
 6. A bounded local storage compatibility check that has passed.
 
-Private SSH connectivity and deploy-key enrollment remain separate. The
-installer must not join Tailscale, publish storage, or modify administrator SSH.
-Its success message should identify these remaining steps without printing
+Owner key registration with exe.dev remains separate. The installer must not
+join a tailnet, publish storage, or modify exe.dev owner SSH. Its success
+message should identify the owner SSH destination without printing
 storage secrets or asking for an external storage account.
 
 ### External storage opt-in
@@ -112,8 +119,8 @@ Relevant enduring constraints:
   overrides; credentials stay in the shared root-only `node.env` file.
 - `crates/celld-ctl/src/manager.rs` stores each app's storage destination in the
   registry when provisioning. Changing the host default does not migrate apps.
-- `celld-ctl backup` currently captures registry/configuration/SSH identity, not
-  object-store contents. Local RustFS data is not included automatically.
+- `celld-ctl backup` captures registry/configuration (and may preserve old
+  SSH artifacts on an un-migrated host), not object-store contents. Local RustFS data is not included automatically.
 
 Native celld 0.6.1 supports HTTP S3-compatible endpoints and path-style requests.
 The loopback exception belongs in celld-ctl, not a fork of celld.
@@ -231,7 +238,7 @@ must not weaken HTTPS certificate validation or change transport permissions.
 Proposed command: `celld-ctl storage init-local`, implemented before the normal
 `Manager::open` path so a fresh host does not need an existing registry/config.
 It must require root, use fixed production paths, and never be available through
-the SSH request allowlist or narrow deployment sudo rule.
+the remote transport request allowlist.
 
 Split responsibilities:
 
@@ -302,10 +309,10 @@ not guess a new credential when one half of a credential pair is missing.
    complete. Failed checks must not report the host as ready.
 8. On a fresh host only, initialize/validate/enable Caddy using existing templates.
    Never overwrite an unrelated Caddy config or port-8000 workload.
-9. Start/verify dedicated deployment SSH and print a concise readiness summary.
+9. Print a concise readiness summary; owner SSH uses the existing exe.dev gateway.
 
 Re-running installation must preserve RustFS data, host credentials, app pins,
-registry/history, enrolled SSH keys and server identity. Do not restart healthy
+registry/history and owner SSH access. Do not restart healthy
 storage unnecessarily or change binary versions as an incidental side effect.
 Explicit upgrades can be documented separately.
 
@@ -381,7 +388,8 @@ and record each result rather than inferring a pass from minimum smoke:
    recovery from object storage rather than only from cached SQLite files.
 9. RustFS outage/recovery, abrupt process termination and VM reboot produce
    bounded failures and recovery rather than silent empty-state replacement.
-10. Existing HTTPS external-storage behavior and restricted SSH policy still pass.
+10. Existing HTTPS external-storage behavior and the current owner SSH
+    transport still pass.
 
 A process kill/reboot test does not certify physical power-loss or volume-loss
 survival. Container restart is not VM reboot. Even expanded development
@@ -507,7 +515,7 @@ Expanded VM/arm64 coverage and resource measurements remain outstanding.
 
 Implemented shared origin validation/SigV4 support and operator-only local
 bootstrap with hermetic tests; retain external HTTPS behavior and the existing
-SSH allowlist in future changes.
+transport request allowlist in future changes.
 
 ### Phase C — Installer-managed local storage
 
@@ -532,9 +540,9 @@ Release and longer-term acceptance checks (not all are qualified by Section 7):
 
 - The four README host commands provision working local storage without cloud
   accounts, manual bucket creation or credential edits.
-- The first real `cella deploy` succeeds after SSH setup and private connectivity.
+- The first real `cella deploy` succeeds through owner SSH after key and host-key setup.
 - Storage listeners remain loopback-only; console is disabled; secrets stay local.
-- Restart/reinstall preserves acknowledged named-object state and SSH identities.
+- Restart/reinstall preserves acknowledged named-object state without altering exe.dev SSH.
 - Existing external hosts remain unchanged unless deliberately migrated.
 - External-storage opt-in is documented and regression-tested.
 - No compatibility or power-loss guarantee is claimed beyond measured evidence.
