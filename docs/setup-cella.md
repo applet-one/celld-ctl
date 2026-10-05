@@ -160,7 +160,7 @@ SSH without setting a separate version. Native celld owns watching/local state.
 | Host-key verification failed | B4 for the **dedicated** service and exact hostname/port; compare the operator's fingerprint |
 | Unknown app from `status` | Run the first successful `cella deploy`; status does not create apps |
 | esbuild missing | Install the project's dependencies/local esbuild; or configure `CELLD_ESBUILD` locally |
-| Native storage/publish error | Ask the host operator to check [host storage](setup-host.md#a3-configure-storage-on-the-host-only) and service health; do **not** add host storage credentials on your laptop |
+| Native storage/publish error | Ask the host operator to check [host storage](setup-host.md#a3-configure-storage-on-the-host-only) and, on default x86_64 local-storage hosts, [RustFS health](operations.md#local-storage-service-and-recovery-when-installed); on external hosts, check the configured endpoint and bucket. Do **not** add host storage credentials on your laptop |
 | Pin/version mismatch | Check client/host 0.2 compatibility and exact native pin; do not substitute latest |
 | Publish succeeded but activation failed | Inspect status/logs and retry the same source; the published pointer can already be adopted |
 

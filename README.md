@@ -11,7 +11,8 @@ loopback service, allocated ports, local cache and `/APP_SLUG/` route.
 
 ## Set up the host
 
-On your Linux VM, using your administrator account:
+On a fresh **Linux x86_64** single-node development/testing host with
+systemd, using your administrator account:
 
 ```sh
 git clone https://github.com/applet-one/celld-ctl.git
@@ -20,9 +21,23 @@ cargo build --release --locked -p celld-ctl
 sudo scripts/install-host.sh
 ```
 
-Next, install the pinned celld release, configure storage, and set up Caddy and
-private SSH access. See [Host setup, A2–A5](docs/setup-host.md#a2-install-the-exact-native-celld-release)
-for commands, and [docs/setup-host.md](docs/setup-host.md) for prerequisites.
+On a **fresh x86_64 host**, the no-flag installer provisions local RustFS,
+generates host-only credentials, creates the bucket, installs the pinned native
+celld release and initializes fresh-host Caddy. No cloud storage account,
+bucket setup or credential edit is needed. Arrange private SSH connectivity
+and enroll deploy keys separately. See [host setup](docs/setup-host.md) for
+prerequisites and [external storage](docs/setup-host.md#external-s3-compatible-storage)
+for the opt-out (`--storage external`).
+
+On a **fresh Linux arm64/aarch64 host**, choose `--storage local` or
+`--storage external` explicitly; the no-flag installer refuses to select a
+default until native arm64 qualification. Existing hosts keep their storage
+mode, data, pins and credentials on reinstall; flags do not migrate storage.
+The October 5, 2026 [live smoke](docs/rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
+passed on an x86_64 Ubuntu 24.04 **systemd Docker container**, not a VM.
+Local storage remains single-node development/testing storage, **not HA**.
+A controlled RustFS stop/restart recovered; abrupt kills, VM reboot, arm64,
+VM deployment and cold-snapshot restore have not been qualified.
 
 ## Set up your dev machine
 
@@ -71,8 +86,8 @@ the host operator. See [Dev-machine setup](docs/setup-cella.md) for details.
 3. Verify the server fingerprint before adding its key to `known_hosts`.
 
 See [Dev-machine setup](docs/setup-cella.md) for commands and troubleshooting.
-**Developers and CI need no R2 credentials or bucket configuration.** Never put
-private keys in Wrangler or this repository.
+**Developers and CI need no host object-store credentials or bucket
+configuration.** Never put private keys in Wrangler or this repository.
 
 ## Deploy an app
 

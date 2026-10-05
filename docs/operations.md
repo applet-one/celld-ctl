@@ -12,7 +12,8 @@ management is installed.
 
 ## Build and install
 
-On a Linux system with systemd, Caddy, OpenSSH, Python 3 and a Rust toolchain:
+On a fresh Linux x86_64 single-node development/testing system with systemd,
+Caddy, OpenSSH, Python 3 and a Rust toolchain:
 
 ```sh
 cargo build --release --locked
@@ -24,22 +25,29 @@ journal namespace, a locked-down SSH deploy account, a separate loopback-only `c
 on port `2222`, and its narrow sudo rule. The primary SSH service is untouched.
 It does **not** migrate existing application object data or app pins, join a
 private network or add deploy keys. Inspect templates and back up existing
-configuration before installation. A fresh no-flag installation selects manual
-external S3-compatible storage; it does not install RustFS or create a bucket
-or credentials. `sudo scripts/install-host.sh --storage local` explicitly opts
-into single-node local RustFS on a disposable development/testing host.
-The local path is **experimental** until the
-[live compatibility gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
-passes. Installer readiness alone does not qualify it.
+configuration before installation. On a **fresh x86_64 host**, no flag installs
+single-node local RustFS, provisions its bucket and root-only credentials, and
+checks native storage readiness. `--storage local` selects it explicitly;
+`--storage external` opts out into manual S3-compatible storage setup.
+On a **fresh arm64/aarch64 host**, a no-flag install refuses to choose:
+specify `--storage local` (not natively qualified on arm64) or
+`--storage external`. Reinstalling a configured host preserves its existing
+mode, registry targets, credentials and app pins; flags do not migrate object
+data. The [October 5, 2026 minimum live gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
+passed with real restricted-SSH deployment and cache-free named-object
+recovery in an x86_64 Ubuntu 24.04 **systemd Docker container**, not a VM.
+It does not qualify VM/arm64, abrupt process kills, cold restore, or HA.
 
-For manual external storage setup, copy
+For external storage setup (explicitly select `--storage external` on a new
+host), copy
 `examples/config/config.external.json.example` to `/etc/celld-ctl/config.json`
 and replace placeholders. Make it root-owned mode `0600`. Install each exact native
-celld release, root-owned and executable, at
+celld release if managing the host manually or if installer installation failed,
+root-owned and executable, at
 `/usr/local/lib/celld/releases/vVERSION/celld`. The configured release becomes
 new apps' pin; changing the default does not upgrade existing apps.
 
-For manual external setup, write only the node's storage credential variables to `/etc/celld/node.env`,
+For external setup, write only the node's storage credential variables to `/etc/celld/node.env`,
 root-owned mode `0600` (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional
 `AWS_SESSION_TOKEN`). The host uses these for native publication as well as
 serving. Developers and CI do not need storage credentials or bucket settings.
@@ -231,8 +239,9 @@ readiness, then start apps and reopen deployments. Do **not** treat a live
 recursive copy of RustFS's files as a consistent backup. Restore only onto an
 isolated host with writers stopped, the correct pinned binaries/configuration
 and matching credential pair; verify a known named object's state before
-reopening service. The cold-snapshot restore remains to be proven by the
-[disposable-host gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default).
+reopening service. Cold-snapshot restore remains unproven by the
+[minimum container gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default);
+test it separately on a disposable host before relying on this recovery plan.
 
 There is no remotely accessible reset command. For a disposable host, stop
 deployment access and app/storage services, archive registry/config/credentials

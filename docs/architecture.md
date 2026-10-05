@@ -10,9 +10,10 @@ cella deploy -> local native dry-run/esbuild
                                                     | native publish (celld-publish user)
                                                     | host-only storage settings/credentials
                                                     +-> object-store app prefix
-                                                        external HTTPS S3 storage (ordinary setup)
-                                                        or local RustFS (experimental opt-in,
+                                                        local RustFS (fresh x86_64 default;
                                                         loopback :9000)
+                                                        or external HTTPS S3 storage
+                                                        (explicit --storage external)
                                                     | pointer/readiness verification
                                                     +-> activate/reload + history
 
@@ -36,9 +37,12 @@ prefixes, not storage processes, separate fleets. Local RustFS is single-node
 development/testing storage, not HA. Its persistent data is authoritative,
 whereas `/var/lib/celld/APP_SLUG` is an app cache. External storage remains
 an explicit alternative; existing registry targets are not migrated by changing
-host defaults. Local storage remains opt-in until the
-[live compatibility gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
-passes.
+host defaults. A fresh arm64 host requires an explicit `--storage local` or
+`--storage external`; there is no no-flag arm64 default yet. The
+[October 5 live gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
+demonstrated named-object recovery after removing **only** the local app cache
+in an x86_64 systemd Docker container. It does not qualify VM/arm64 deployment,
+cold restore, abrupt failure recovery or production durability.
 
 This is a trusted-deployer single-host MVP, not a hostile multi-tenant boundary.
 Deploy keys are fleet-wide; serving uses a shared runtime account. The dedicated

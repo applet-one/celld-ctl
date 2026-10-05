@@ -2,13 +2,18 @@
 
 **Run these steps on the Linux VM/server, using its administrator account.**
 Developers follow [B. Set up cella on your dev machine](setup-cella.md) afterward.
-Only the host operator configures object storage; developers need only restricted
-SSH access and their existing Worker project.
+Only the host operator controls object storage; developers need only restricted
+SSH access and their existing Worker project. The local path generates its own
+host credentials and bucket; the external path requires operator configuration.
 
-Local RustFS is **opt-in and experimental** until its
-[live compatibility gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
-passes. The no-flag install leaves external S3-compatible storage for the
-operator to configure. Do not put irreplaceable data on an unqualified local host.
+On a **fresh x86_64** single-node development/testing host, the no-flag
+installer sets up local RustFS by default. Its
+[October 5, 2026 live gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
+passed on an x86_64 Ubuntu 24.04 systemd **Docker container**, not a VM.
+That evidence includes cache-free named Durable Object recovery but does not
+qualify VM, arm64, abrupt-kill/reboot or cold-restore behavior. A controlled
+RustFS stop/restart did recover. Local storage is not HA;
+do not place irreplaceable data on a host without an independent backup.
 
 This guide is for a **new host**. For an existing deployment, back up its
 configuration and follow [migration/operations](operations.md) instead of
@@ -17,7 +22,8 @@ replacing its Caddy configuration or moving its fleet prefix.
 ## A1. Install prerequisites and celld-ctl
 
 You need Linux with systemd, a Rust toolchain, Caddy, OpenSSH server/client,
-Python 3, curl, gzip, and administrator/sudo access. From this repository:
+Python 3, curl, gzip, and administrator/sudo access. On a **fresh x86_64**
+host, from this repository:
 
 ```sh
 cargo build --release --locked -p celld-ctl
@@ -27,13 +33,16 @@ sudo scripts/install-host.sh
 The installer creates the runtime/publisher/deployment accounts and starts a
 separate deployment-only SSH service, `cella-sshd`, on **127.0.0.1:2222**.
 It leaves your existing administrator/platform SSH service untouched and does
-not join a private network or enroll developer keys. A fresh no-flag install
-selects external/manual storage and does **not** install or provision RustFS.
-It installs the pinned native celld release and initializes Caddy on a fresh
-host; A2 and A4 give manual checks/fallbacks. Complete A3 to supply the
-external bucket and credentials. Existing host storage settings should be
-preserved; do not change modes as an implicit migration.
-Node.js/esbuild are not required on the host for publishing prepared deployments.
+not join a private network or enroll developer keys. On a **fresh x86_64**
+host, no flag selects local RustFS and needs no cloud bucket or storage-secret
+setup; `--storage external` instead selects manual external configuration in
+A3. On a **fresh arm64/aarch64** host, no flag is accepted until native arm64
+qualification: explicitly choose `--storage local` (unqualified) or
+`--storage external`. The installer installs pinned native celld and initializes
+Caddy on a fresh host; A2 and A4 give manual checks/fallbacks. Reinstalling an
+existing host preserves its selected storage mode and app targets; flags do
+not implicitly migrate buckets, objects or credentials. Node.js/esbuild are
+not required on the host for publishing prepared deployments.
 
 ## A2. Install the exact native celld release
 
@@ -42,9 +51,10 @@ Use these manual steps only if the release was not installed or if managing an
 older external-storage host manually. Do not replace an existing app's pin when
 reinstalling.
 
-The example host configuration pins `0.6.1`. Install that release, or choose
-another exact supported release and set the same version in A3. Never use a
-`latest` symlink as an application's pin.
+The example host configuration pins `0.6.1`. For manual external setup,
+install that release, or choose another exact supported release and set the
+same version in A3. Do not hand-edit generated local storage configuration
+to change an app's pin. Never use a `latest` symlink as an application's pin.
 
 ```sh
 CELLD_VERSION=0.6.1
@@ -74,9 +84,41 @@ Temporary downloads and installed binaries stay outside the source checkout.
 
 ## A3. Configure storage on the host only
 
-**External S3-compatible storage (no flag; also `--storage external`):**
-follow the commands below. The installer does not create an external bucket or
-credentials. A missing external configuration means setup is incomplete; it
+### Local RustFS (fresh x86_64 default)
+
+On a **fresh x86_64 disposable development/testing host**,
+`sudo scripts/install-host.sh` sets up local RustFS. `--storage local` makes
+the same choice explicitly, including on a fresh arm64 host **at the operator's
+own risk** pending native arm64 qualification. The installer and operator-only
+`celld-ctl storage prepare-local` / `celld-ctl storage init-local` helpers
+provision bucket `celld-dev`, endpoint `http://127.0.0.1:9000`, region
+`us-east-1`, persistent data under `/var/lib/rustfs`, and root-only generated
+credentials under `/etc/rustfs/rustfs.env` and `/etc/celld/node.env`. It
+prepares credentials before starting the service and initializes the bucket
+afterward. These are root-only host actions, not developer SSH commands. The
+local S3 listener must remain loopback-only and the console disabled. The
+shared generated credential pair is an administrative RustFS credential,
+**not** per-app IAM isolation.
+
+Reinstallation must preserve RustFS data, credentials, registry, app pins,
+deployment keys and SSH server identity; inconsistent or unknown state must
+stop installation rather than be overwritten. The default is for **fresh
+x86_64 hosts only**; it does not move existing external app targets. Local
+`celld-ctl backup` omits `/var/lib/rustfs` (authoritative application data).
+See [backup and recovery](operations.md#history-rollback-backups-and-capacity)
+before relying on this VM's storage volume. The
+[recorded container smoke](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
+verified a real restricted-SSH deployment and named-object state after app
+restart, RustFS restart and archiving **only** the local app cache. A
+controlled RustFS stop/restart made diagnose fail promptly and then recover;
+it did not test a VM, arm64, abrupt process kill, VM reboot, cold restore or
+production durability. Do not copy the local example config over a live host.
+
+### External S3-compatible storage
+
+On a **fresh host**, select `sudo scripts/install-host.sh --storage external`
+and follow the commands below. The installer does not create an external bucket
+or credentials. A missing external configuration means setup is incomplete; it
 must not silently fall back to RustFS. Do not switch an existing host by
 changing the installer flag: defaults do not migrate persisted app targets or
 objects.
@@ -112,30 +154,6 @@ AWS_SECRET_ACCESS_KEY=REPLACE_WITH_HOST_SECRET_KEY
 Use credentials able to read/write the host's fleet bucket. Never commit this
 file, put credentials in Wrangler, or send them to developers/CI. The same
 host-owned credentials support native publication and durable runtime storage.
-
-### Experimental single-node local storage
-
-On a **fresh disposable development/testing host only**, opt in with
-`sudo scripts/install-host.sh --storage local`. The installer and operator-only
-`celld-ctl storage prepare-local` / `celld-ctl storage init-local` helpers
-provision RustFS with bucket `celld-dev`, endpoint
-`http://127.0.0.1:9000`, region `us-east-1`, data under `/var/lib/rustfs`, and
-root-only generated credentials under `/etc/rustfs/rustfs.env` and
-`/etc/celld/node.env`. The installer prepares credentials before starting the
-service and initializes the bucket afterward; these are root-only host actions,
-not developer SSH commands. The local S3 listener must remain loopback-only and
-the console disabled. Its single shared generated credential pair is an
-administrative RustFS credential, **not** per-app IAM isolation.
-
-The initial local example is illustrative, not a migration tool. Reinstallation
-must preserve existing RustFS data, credentials, registry, app pins, deployment
-keys and server identity. It must reject inconsistent/unknown local state
-rather than overwrite it. An installer readiness check does **not** establish
-the still-pending live compatibility gate. Local compatibility, cache-free
-Durable Object recovery, outage and restore behavior remain **unqualified** until the
-[gate](rustfs-default-storage-plan.md#7-compatibility-gate-do-this-before-making-rustfs-the-default)
-is recorded; an apparently successful installation is not proof of those
-properties. Do not copy the local example config over a live host.
 
 ## A4. Initialize the application proxy
 
@@ -240,7 +258,7 @@ server's key may differ from the primary/platform SSH key on port 22.
 sudo systemctl is-active caddy cella-sshd
 sudo celld-ctl list
 sudo ss -ltnp
-# If using installer-managed local storage:
+# On local-storage hosts:
 sudo systemctl is-active rustfs.service
 ```
 

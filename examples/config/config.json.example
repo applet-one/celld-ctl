@@ -1,7 +1,7 @@
 {
-  "bucket": "s3://BUCKET",
-  "endpoint": "https://OBJECT_STORE_ENDPOINT",
-  "region": "auto",
+  "bucket": "s3://celld-dev",
+  "endpoint": "http://127.0.0.1:9000",
+  "region": "us-east-1",
   "celld_version": "0.6.1",
   "port_start": 8101,
   "port_end": 8999,

@@ -1,5 +1,13 @@
 # Plan: default local RustFS storage for development hosts
 
+**Status, October 5, 2026:** the core live release smoke passed on a disposable
+x86_64 Ubuntu 24.04 systemd **Docker container**, including restricted-SSH
+deploy and cache-free named Durable Object recovery. The installer now defaults
+to local RustFS **only on fresh x86_64 hosts**. Fresh arm64/aarch64 hosts require
+an explicit `--storage local` or `--storage external` until native arm64
+qualification; existing hosts preserve their configured mode. See the dated
+evidence in Section 7. No VM, arm64, abrupt-kill, VM-reboot or cold-restore
+qualification is claimed.
 
 ## 1. Decision and scope
 
@@ -23,7 +31,8 @@ hosts, not a prerequisite for installation.
 - Use official prebuilt RustFS release binaries: no RustFS source build, Docker
   or container runtime required. Only celld-ctl is built from this checkout.
 - Automatic installation, bucket creation, credential generation and host config.
-- Linux x86_64 and arm64, matching existing supported host architectures.
+- Linux x86_64 default; arm64 remains an explicit mode pending native
+  qualification (availability of an asset is not evidence of compatibility).
 - Loopback-only S3 access, with no public storage or console endpoint.
 - Real compatibility and persistence tests using pinned RustFS/native celld.
 - Idempotent installation and an opt-in external-storage path.
@@ -40,9 +49,9 @@ hosts, not a prerequisite for installation.
 
 ## 2. Intended user experience
 
-### Fresh default host
+### Fresh x86_64 default host
 
-Target README commands, after documented prerequisites are installed:
+README commands, after documented prerequisites are installed on x86_64:
 
 ```sh
 git clone https://github.com/applet-one/celld-ctl.git
@@ -68,7 +77,7 @@ storage secrets or asking for an external storage account.
 
 ### External storage opt-in
 
-Proposed installer interface:
+Installer interface:
 
 ```sh
 sudo scripts/install-host.sh --storage external
@@ -81,15 +90,22 @@ not a reason to silently fall back to local storage.
 
 No new `cella` flags or SSH protocol fields are required.
 
-## 3. Current implementation constraints
+## 3. Implementation constraints and history
 
-Relevant existing code:
+At plan inception, the installer left native celld, storage configuration
+and Caddy initialization to the operator and host config/pointer verification
+required HTTPS. That description is no longer the current installer behavior:
+the fresh external path installs pinned native celld and initializes fresh-host
+Caddy; explicit local mode installs RustFS with operator-only preparation and
+initialization helpers and allows canonical loopback HTTP. Inspect the current
+installer and tests before treating any plan item as implemented or qualified.
 
-- `scripts/install-host.sh` installs host components but currently leaves native
-  celld, storage configuration and Caddy initialization to the operator.
-- `crates/celld-ctl/src/config.rs` requires an HTTPS storage origin.
-- `crates/celld-ctl/src/runtime.rs::verify_pointer` independently requires HTTPS
-  and signs a path-style S3 GET, including the endpoint port in the signed host.
+Relevant enduring constraints:
+
+- `crates/celld-ctl/src/config.rs` and pointer verification must restrict HTTP
+  to the canonical loopback local endpoint; external origins retain HTTPS.
+- `crates/celld-ctl/src/runtime.rs::verify_pointer` signs a path-style S3 GET,
+  including the endpoint port in the signed host.
 - `crates/celld-ctl/src/publish.rs` invokes native celld with the configured
   bucket/endpoint/region and a deliberately cleared environment.
 - `crates/celld-ctl/src/render.rs` generates application environments and systemd
@@ -100,7 +116,7 @@ Relevant existing code:
   object-store contents. Local RustFS data is not included automatically.
 
 Native celld 0.6.1 supports HTTP S3-compatible endpoints and path-style requests.
-The HTTP restriction to change is in celld-ctl, not a request to fork celld.
+The loopback exception belongs in celld-ctl, not a fork of celld.
 
 ## 4. Local storage design
 
@@ -257,7 +273,8 @@ before replacing files. Stage and verify downloads before installation.
 
 | Existing host state | No storage flag | `--storage local` | `--storage external` |
 | --- | --- | --- | --- |
-| Fresh host | Initialize local | Initialize local | External setup only |
+| Fresh x86_64 host | Initialize local | Initialize local | External setup only |
+| Fresh arm64/aarch64 host | Refuse; require explicit mode | Initialize local (unqualified) | External setup only |
 | Recognized installer-managed local host | Reuse local | Reuse local | Refuse implicit migration |
 | Configured external host | Preserve external | Refuse implicit migration | Preserve external |
 | Partial/inconsistent or unrecognized local host | Stop with recovery instructions | Stop with recovery instructions | Stop with recovery instructions |
@@ -298,10 +315,57 @@ probes automatically against an existing operator bucket.
 
 ## 7. Compatibility gate: do this before making RustFS the default
 
-Use a disposable Linux VM and the exact native releases. Keep all credentials,
-VM destinations and generated state outside source control.
+### Minimum live release smoke (passed October 5, 2026)
 
-Required evidence:
+The isolated test used x86_64 Ubuntu 24.04 with systemd in a **Docker
+container**, not a VM, and checksum-verified RustFS 1.0.1 / native celld 0.6.1
+releases. Recorded observations:
+
+- Fresh local install, native installer `celld diagnose` and strict storage
+  readback passed; a repeated install preserved credentials. The S3 and
+  deployment-SSH listeners remained loopback-only. A second separately labeled
+  container passed a **fresh no-flag x86_64** install at 15:24:39–44 UTC:
+  installer metadata `mode=local`, `phase=ready`, correct pins/config,
+  RustFS/Caddy/`cella-sshd` active, loopback S3 and SSH.
+- An explicit native `celld diagnose` at 15:22 UTC exited 0 and exercised
+  conditional create, reject-create, update and reject-stale conditions.
+  This does **not** demonstrate competing-writer races or every listing/
+  pagination boundary.
+- A real restricted-SSH `cella deploy` published counter app `smoke-do` at
+  version `b03cc17fc3cb3274`; activation through Caddy served
+  `fixed-smoke-001` counts 1, 2, 3. App restart yielded count 4, RustFS
+  restart yielded count 5. With the app stopped, **only**
+  `/var/lib/celld/smoke-do` was moved to an archive (not deleted); restarting
+  the app yielded count 6, demonstrating recovery without that local app cache.
+- After the real deployment, a no-flag reinstall left SHA-256 hashes of
+  credentials, config and deployment SSH public key, and the SQLite registry
+  unchanged; services stayed active and the named DO responded through the
+  proxy at count 7.
+- At 15:24 UTC, with RustFS deliberately stopped, `celld diagnose` failed
+  quickly (exit 1, bucket unavailable). After RustFS restart, diagnose
+  succeeded and the named DO responded at count 8. This is a controlled
+  stop/restart observation, **not** an abrupt process kill or VM reboot test.
+
+This minimum smoke supports the **fresh x86_64 single-node development/testing
+default** and cache-free recovery in the tested container only. It does not
+prove VM or arm64 behavior, cold-snapshot restore, physical power-loss survival
+or production HA. Keep credentials and generated instance state outside source
+control. A separate explicit-external container passed storage-mode selection
+but exposed a fresh SSH reload race. The installer was patched to skip a
+fresh reload, restart an existing service and verify SSH is active. A fourth
+new fresh no-flag local container passed install **and** no-flag reinstall
+after the fix. A fifth new fresh explicit-external container passed
+`--storage external` at 15:29:27–31 UTC: no host config, installer local state,
+RustFS unit/environment or node credentials were provisioned, and the
+dedicated SSH service became active after two seconds, bound to loopback only.
+This checks external install selection and SSH service startup, **not** a live
+deployment against an external bucket.
+
+### Recommended expanded qualification (not established by the container smoke)
+
+Use a disposable Linux VM and the exact pinned releases, then separately test
+arm64 before documenting it as qualified. Retain these broader test targets
+and record each result rather than inferring a pass from minimum smoke:
 
 1. Conditional create succeeds for absence and rejects an existing object.
 2. Conditional overwrite succeeds for the current ETag and rejects a stale ETag.
@@ -320,11 +384,13 @@ Required evidence:
 10. Existing HTTPS external-storage behavior and restricted SSH policy still pass.
 
 A process kill/reboot test does not certify physical power-loss or volume-loss
-survival. This is development qualification, not a new production durability claim.
+survival. Container restart is not VM reboot. Even expanded development
+qualification is not a new production durability claim.
 
-If this gate fails, fix/upgrade the tested component or keep the feature behind
-an explicit opt-in. Do not bypass conditions, disable native checks or silently
-weaken durability to make the default work.
+If minimum release smoke fails, fix/upgrade the tested component or keep the
+feature behind an explicit opt-in. Do not bypass conditions, disable native
+checks or silently weaken durability to make the default work. An x86_64
+container pass is not evidence for any unrun expanded item.
 
 ## 8. Test plan
 
@@ -406,7 +472,9 @@ or endpoint only affects newly provisioned apps, not existing app storage.
 
 ## 10. Documentation changes
 
-Only change README claims after the default installer and compatibility gate work.
+The README fresh-x86_64 claim follows the passed **minimum container gate** in
+Section 7 and the architecture-limited selector. Expanded qualification
+remains separate from this documentation change.
 
 - `README.md`: keep the four host commands; explain that the default installer
   provisions local RustFS for development/testing. Link prerequisites, private
@@ -431,32 +499,36 @@ Only change README claims after the default installer and compatibility gate wor
 
 ### Phase A — Compatibility spike
 
-Pin candidate releases and exercise Section 7 manually on a disposable VM.
-Deliver a recorded pass/fail matrix, known issues and resource measurements.
-No README default change yet.
+The pinned-release minimum gate was exercised in a disposable x86_64
+systemd Docker container and recorded in Section 7; it was **not** a VM test.
+Expanded VM/arm64 coverage and resource measurements remain outstanding.
 
 ### Phase B — Endpoint and bootstrap foundation
 
-Implement shared origin validation/SigV4 support and operator-only local bootstrap.
-Add hermetic tests; retain external HTTPS behavior and the existing SSH allowlist.
+Implemented shared origin validation/SigV4 support and operator-only local
+bootstrap with hermetic tests; retain external HTTPS behavior and the existing
+SSH allowlist in future changes.
 
 ### Phase C — Installer-managed local storage
 
-Add release manifest, native download/install support, RustFS unit, local config,
-selection/recovery rules, readiness checks and safe fresh Caddy initialization.
-Deliver a default installation that needs no storage settings from the user.
+Implemented release manifest, native download/install support, RustFS unit,
+local config, selection/recovery rules, readiness checks and safe fresh Caddy
+initialization. The no-flag default applies to **fresh x86_64 hosts only**.
 
 ### Phase D — End-to-end qualification
 
-Automate the disposable-host suite, reinstall preservation, outage recovery,
-cache-free restore and cold snapshot restoration on supported Linux architectures.
+The minimum x86_64 container smoke includes cache-free named-DO recovery,
+no-flag reinstall preservation and controlled RustFS stop/restart. Continue
+expanded VM/arm64, abrupt-kill/reboot and cold snapshot/restore qualification;
+do not infer these from container smoke.
 
 ### Phase E — Documentation and release
 
-Switch README and host guide to the implemented local default. Document external
-opt-in and clearly label the single-node development/testing scope.
+Document the fresh-x86_64-only local default and explicit external opt-out,
+with the tested container scope and untested paths stated. Do not present
+expanded checks as passed.
 
-Done means:
+Release and longer-term acceptance checks (not all are qualified by Section 7):
 
 - The four README host commands provision working local storage without cloud
   accounts, manual bucket creation or credential edits.
