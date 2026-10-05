@@ -289,6 +289,25 @@ fn version_mismatch_never_runs_build_or_downloads_newer() {
     assert_eq!(f.requests().len(), 1);
 }
 #[test]
+fn native_version_warning_is_visible_but_does_not_block_deploy() {
+    let f = Fixture::new();
+    let script = f
+        .native_source("1.2.3", &f.build_body("new-id"))
+        .replace(
+            "echo 'celld 1.2.3';",
+            "printf '%s\\n' '2026-10-05T17:00:48Z  WARN celld::memory: allocator warning' 'celld 1.2.3';",
+        );
+    executable(&f.binary_path(), &script);
+    let output = f.run(&["deploy"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cella: warning: celld --version:"));
+    assert_eq!(f.requests().len(), 2);
+}
+#[test]
 fn host_failure_prevents_build() {
     let f = Fixture::new();
     f.ssh(true);

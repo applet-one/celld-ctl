@@ -46,11 +46,26 @@ pub fn verify_output(output: &[u8], tag: &str) -> Result<()> {
     let text = std::str::from_utf8(output)
         .context("celld --version was not UTF-8")?
         .trim();
-    // Reject debug builds and additional tokens as well as newer/older binaries.
-    if text != format!("celld {}", &expected[1..]) {
-        bail!("celld version mismatch: required {expected}, binary reported {text:?}; refusing to substitute another release");
+    let version_line = format!("celld {}", &expected[1..]);
+    if text == version_line {
+        return Ok(());
     }
-    Ok(())
+    // Some macOS releases log an allocator warning to stdout before printing
+    // the real version. Permit diagnostic WARN lines, but never a different
+    // version or arbitrary extra output masquerading as an exact release.
+    let lines: Vec<_> = text.lines().collect();
+    if lines.iter().filter(|line| **line == version_line).count() == 1
+        && lines
+            .iter()
+            .filter(|line| **line != version_line)
+            .all(|line| line.contains(" WARN "))
+    {
+        for line in lines.into_iter().filter(|line| *line != version_line) {
+            eprintln!("cella: warning: celld --version: {line}");
+        }
+        return Ok(());
+    }
+    bail!("celld version mismatch: required {expected}, binary reported {text:?}; refusing to substitute another release")
 }
 
 fn verify(binary: &Path, tag: &str) -> Result<()> {
@@ -171,11 +186,19 @@ mod tests {
         }
         assert_eq!(version_tag("1.2.3-rc.1").unwrap(), "v1.2.3-rc.1");
         assert!(verify_output(b"celld 1.2.3\n", "v1.2.3").is_ok());
+        assert!(verify_output(
+            b"2026-10-05T17:00:48Z  WARN celld::memory: allocator warning\ncelld 1.2.3\n",
+            "v1.2.3"
+        )
+        .is_ok());
         for output in [
             b"celld 1.2.4".as_slice(),
             b"celld 1.2.2",
             b"celld 1.2.3 (debug)",
             b"other 1.2.3",
+            b"2026-10-05T17:00:48Z  WARN celld::memory: allocator warning\ncelld 1.2.4",
+            b"2026-10-05T17:00:48Z  WARN celld::memory: allocator warning\ncelld 1.2.4\ncelld 1.2.3",
+            b"unexpected extra output\ncelld 1.2.3",
         ] {
             assert!(verify_output(output, "1.2.3").is_err());
         }
