@@ -7,7 +7,7 @@
 ### Host Machine
 
 ```sh
-git clone https://github.com/applet-one/celld-ctl.git; cd celld-ctl
+git clone git@github.com:applet-one/celld-ctl.git; cd celld-ctl
 cargo build --release --locked -p celld-ctl
 sudo scripts/install-host.sh
 ```
@@ -19,7 +19,7 @@ existing-host precautions.
 
 Setup:
 ```sh
-git clone https://github.com/applet-one/celld-ctl.git; cd celld-ctl
+git clone git@github.com:applet-one/celld-ctl.git; cd celld-ctl
 cargo install --locked --path crates/cella --force
 
 export CELLA_HOST=YOUR_VM_SSH_HOST
