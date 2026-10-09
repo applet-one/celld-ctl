@@ -248,10 +248,14 @@ fn run(cli: Cli) -> Result<i32> {
                 bail!("host returned an unexpected publication version or dry-run result");
             }
             diagnostics.show(native_stderr, *verbose);
+            let public_port = result.get("public_port").and_then(|v| v.as_u64());
             if *json {
                 let mut value = native_output.clone();
                 value["slug"] = serde_json::json!(slug);
                 value["source_revision"] = serde_json::json!(revision);
+                if let Some(port) = public_port {
+                    value["public_port"] = serde_json::json!(port);
+                }
                 println!("{}", serde_json::to_string(&value)?);
             } else {
                 eprintln!("  ✓ Validated on host");
@@ -261,6 +265,14 @@ fn run(cli: Cli) -> Result<i32> {
                     "Source    {}",
                     cella::output::source_label(revision.as_deref())
                 );
+                if let Some(port) = public_port {
+                    println!("Public    port {port}");
+                    if let Ok(host) = std::env::var("CELLA_HOST") {
+                        if let Some(url) = cella::output::app_url(&host, port) {
+                            println!("URL       {url}");
+                        }
+                    }
+                }
             }
             Ok(0)
         }

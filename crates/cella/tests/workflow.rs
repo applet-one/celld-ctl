@@ -121,7 +121,7 @@ printf '%s\n' "$request" >> {requests}
 {failure}
 case "$request" in
   *'"op":"provision"'*|*'"op":"target"'*) cat >/dev/null; printf '%s\n' '{{"ok":true,"result":{{"slug":"my-app","celld_version":"1.2.3","enabled":false}}}}';;
-  *'"op":"deploy"'*) cat > {payload}; id=$(printf '%s' "$request" | sed -n 's/.*"version_id":"\([^"]*\)".*/\1/p'); printf '%s\n' '{{"ok":true,"result":{{"version_id":"'"$id"'","native_output":{{"worker":"my-app","version":"'"$id"'","location":"s3://HOST_ONLY_PREFIX","dry_run":false}},"native_stderr":"host native uploaded\n","enabled":true}}}}';;
+  *'"op":"deploy"'*) cat > {payload}; id=$(printf '%s' "$request" | sed -n 's/.*"version_id":"\([^"]*\)".*/\1/p'); printf '%s\n' '{{"ok":true,"result":{{"version_id":"'"$id"'","native_output":{{"worker":"my-app","version":"'"$id"'","location":"s3://HOST_ONLY_PREFIX","dry_run":false}},"native_stderr":"host native uploaded\n","enabled":true,"public_port":9101}}}}';;
   *'"op":"logs"'*) cat >/dev/null; printf '%s\n' '{{"ok":true,"result":{{"text":"journal entry\n"}}}}';;
   *'"op":"deployments"'*) cat >/dev/null; printf '%s\n' '{{"ok":true,"result":[{{"id":1,"slug":"my-app","version_id":"native-version-id","source_revision":"commit-123","deployed_at":"2026-10-08 17:00:00"}}]}}';;
   *'"op":"status"'*) cat >/dev/null; printf '%s\n' '{{"ok":true,"result":{{"target":{{"slug":"my-app","celld_version":"1.2.3","enabled":true}},"active":true,"version_id":"native-version-id","observed_version_id":"native-version-id","unit":"celld-cell@my-app.service","port":8101,"internal_port":18101,"public_port":9101}}}}';;
@@ -277,10 +277,12 @@ fn deploy_output_modes_are_line_oriented_and_keep_diagnostics() {
             let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
             assert_eq!(value["version"], "native-version-id");
             assert_eq!(value["slug"], "my-app");
+            assert_eq!(value["public_port"], 9101);
             assert!(value["source_revision"].is_null());
             assert!(!stderr.contains("✓"));
         } else {
             assert!(stdout.contains("Version   native-version-id"));
+            assert!(stdout.contains("Public    port 9101"));
             assert!(!stdout.contains("Nodes will adopt"));
             assert!(!stdout.contains("s3://"));
             assert!(stderr.contains("✓ Uploaded and activated"));
@@ -291,6 +293,44 @@ fn deploy_output_modes_are_line_oriented_and_keep_diagnostics() {
         );
         assert_eq!(stderr.contains("<jemalloc>"), args.contains(&"--verbose"));
         assert_eq!(stderr.contains("Toolchain:"), args.contains(&"--verbose"));
+    }
+}
+
+#[test]
+fn deploy_shows_clickable_url_when_host_environment_is_set() {
+    let f = Fixture::new();
+    let output = f
+        .command()
+        .env("CELLA_HOST", "owner@app.example.com")
+        .arg("deploy")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("URL       https://app.example.com:9101")
+    );
+    let output = f.run(&["deploy"]);
+    assert!(output.status.success());
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("URL"));
+}
+
+#[test]
+fn deploy_supports_hosts_without_public_port() {
+    let f = Fixture::new();
+    let ssh = f.bin.join("ssh");
+    let script = fs::read_to_string(&ssh)
+        .unwrap()
+        .replace(",\"public_port\":9101", "");
+    executable(&ssh, &script);
+    for args in [vec!["deploy"], vec!["deploy", "--json"]] {
+        let output = f.run(&args);
+        assert!(output.status.success());
+        if args.contains(&"--json") {
+            let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert!(value.get("public_port").is_none());
+        } else {
+            assert!(!String::from_utf8_lossy(&output.stdout).contains("Public"));
+        }
     }
 }
 

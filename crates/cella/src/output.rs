@@ -85,6 +85,21 @@ impl Diagnostics {
     }
 }
 
+/// Build a public app URL from an SSH host, omitting its optional username.
+pub fn app_url(host: &str, port: u64) -> Option<String> {
+    let hostname = host.rsplit('@').next()?.trim();
+    if hostname.is_empty() {
+        return None;
+    }
+    // Bracket bare IPv6 addresses for URL syntax.
+    let hostname = if hostname.contains(':') && !hostname.starts_with('[') {
+        format!("[{hostname}]")
+    } else {
+        hostname.to_owned()
+    };
+    Some(format!("https://{hostname}:{port}"))
+}
+
 /// Abbreviate Git hashes, but preserve arbitrary source labels.
 pub fn source_label(source: Option<&str>) -> String {
     let source = source.unwrap_or("unknown");

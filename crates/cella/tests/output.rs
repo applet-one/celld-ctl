@@ -54,6 +54,22 @@ fn malformed_responses_are_errors_not_misleading_summaries() {
 }
 
 #[test]
+fn app_urls_omit_ssh_usernames_and_support_ipv6() {
+    use cella::output::app_url;
+    for host in ["app.example.com", "owner@app.example.com"] {
+        assert_eq!(
+            app_url(host, 9101).as_deref(),
+            Some("https://app.example.com:9101")
+        );
+    }
+    assert_eq!(
+        app_url("owner@::1", 9101).as_deref(),
+        Some("https://[::1]:9101")
+    );
+    assert_eq!(app_url("", 9101), None);
+}
+
+#[test]
 fn arbitrary_source_labels_are_not_truncated() {
     assert_eq!(
         source_label(Some("release-2026-10-08")),

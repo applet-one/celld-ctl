@@ -144,10 +144,12 @@ running; use status to check runtime adoption. Logs remain bounded journal text
 A status request for an unknown slug before first deploy is expected.
 
 Deploy shows concise build, host validation and activation stages, followed by
-its version and source revision. Activation updates the deployment pointer;
+its version, source revision and public app port (when returned by the host).
+When `CELLA_HOST` is set, the readable summary also shows a clickable
+`https://HOST:PORT` URL, omitting any SSH username prefix from the host. Activation updates the deployment pointer;
 nodes adopt it on their next poll without a restart. Use `cella deploy --json`
-for one JSON result on stdout (native publication fields plus `slug` and
-`source_revision`); diagnostics remain on stderr. Use `--verbose` to include
+for one JSON result on stdout (native publication fields plus `slug`,
+`source_revision` and, when available, `public_port`); diagnostics remain on stderr. Use `--verbose` to include
 native build/publication output, toolchain selection and storage location.
 These flags can be combined. Captured terminal progress is rendered as plain
 lines, and native diagnostics are shown on failure. Routine native summaries
