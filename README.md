@@ -58,5 +58,5 @@ Each app gets its own object-store prefix, pinned celld release and loopback run
 Fresh x86_64 hosts default to local RustFS for single-node development/testing; external S3-compatible storage is optional.
 
 - [Host setup](docs/setup-host.md) · [Owner CLI and SSH setup](docs/cella.md)
-- [Operations, migration, backup and historical test limits](docs/operations.md)
+- [Host operations, backup and recovery](docs/operations.md)
 - [Architecture and security boundary](docs/architecture.md)
