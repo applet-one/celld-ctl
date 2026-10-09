@@ -4,6 +4,8 @@
 
 This is a single-host development and testing setup, not a production HA platform. Fresh x86_64 hosts default to local RustFS storage; external S3-compatible storage is optional.
 
+For app inspirations see https://applet.one/examples
+
 ## Set up the host
 
 You'll need a Linux VM with systemd, sudo, a Rust toolchain, Caddy, Python 3, curl and gzip. See [host setup](docs/setup-host.md) for prerequisites, storage options and existing-host precautions.
