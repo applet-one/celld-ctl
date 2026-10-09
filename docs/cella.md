@@ -135,9 +135,24 @@ Port 8000 lists active slugs linking to their dedicated Caddy ports (9101–9999
 exe.dev forwards these through its authenticated HTTPS proxy; on another VM,
 provide equivalent trusted HTTPS and access control on the same public ports.
 Each app serves at `/` on its port, preserving Wrangler root routes without
-slug path prefixes. Status and deployment history are JSON; logs are bounded
-journal text (`--lines` 1–1000).
+slug path prefixes. Status shows a readable runtime summary, including the
+activated and observed versions; deployment history is a newest-first table.
+Use `cella status --json` or `cella deployments list --json` for the unchanged
+structured host responses. History does not mark the newest entry as currently
+running; use status to check runtime adoption. Logs remain bounded journal text
+(`--lines` 1–1000).
 A status request for an unknown slug before first deploy is expected.
+
+Deploy shows concise build, host validation and activation stages, followed by
+its version and source revision. Activation updates the deployment pointer;
+nodes adopt it on their next poll without a restart. Use `cella deploy --json`
+for one JSON result on stdout (native publication fields plus `slug` and
+`source_revision`); diagnostics remain on stderr. Use `--verbose` to include
+native build/publication output, toolchain selection and storage location.
+These flags can be combined. Captured terminal progress is rendered as plain
+lines, and native diagnostics are shown on failure. Routine native summaries
+and the known unsupported jemalloc background-thread warning are hidden on
+successful non-verbose runs; unrelated diagnostics remain visible.
 
 `cella` downloads and verifies the host's exact native celld pin, builds locally
 with native `deploy --dry-run`, and uploads a bounded package of built modules,

@@ -5,7 +5,6 @@ use cella::{
 };
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -42,6 +41,12 @@ enum Action {
         /// Source label; defaults to Git HEAD, suffixed -dirty for local changes.
         #[arg(long)]
         source_revision: Option<String>,
+        /// Emit one structured deployment result on stdout.
+        #[arg(long)]
+        json: bool,
+        /// Show native build and publication diagnostics.
+        #[arg(long)]
+        verbose: bool,
     },
     Deployments {
         #[command(subcommand)]
@@ -52,12 +57,20 @@ enum Action {
         #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u16).range(1..=1000))]
         lines: u16,
     },
-    Status,
+    Status {
+        /// Emit the structured host response instead of a readable summary.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
 enum Deployments {
-    List,
+    List {
+        /// Emit the structured host response instead of a table.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 impl Cli {
@@ -131,6 +144,8 @@ fn run(cli: Cli) -> Result<i32> {
         }
         Action::Deploy {
             source_revision: explicit_revision,
+            json,
+            verbose,
         } => {
             if let Some(revision) = explicit_revision {
                 cella::transport::validate_source_revision(revision)?;
@@ -138,7 +153,12 @@ fn run(cli: Cli) -> Result<i32> {
             let slug = cli.slug()?;
             let ssh = cli.ssh()?;
             let target = ssh.target(&Request::Provision { slug: slug.clone() }, &slug)?;
-            let binary = release::ensure(&target.celld_version, &release::cache_root()?)?;
+            let binary =
+                release::ensure_verbose(&target.celld_version, &release::cache_root()?, *verbose)?;
+            let mut diagnostics = cella::output::Diagnostics::default();
+            if !json {
+                eprintln!("Deploying {slug} · celld {}\n", target.celld_version);
+            }
             let (config_path, original_config) = config::read_project(&cli.project)?;
             bundle::check_scope(&original_config)?;
             let root = config_path
@@ -159,8 +179,11 @@ fn run(cli: Cli) -> Result<i32> {
                 .arg("s3://cella-build")
                 .current_dir(root)
                 .stdin(Stdio::null())
-                .stderr(Stdio::inherit())
+                .stderr(Stdio::piped())
                 .stdout(Stdio::piped());
+            if *verbose {
+                eprintln!("Toolchain: {}", toolchain::detect(root).name());
+            }
             let _tools = toolchain::configure(&mut command, root)?;
             bundle::configure_capture(&mut command, capture.path())?;
             bundle::clear_storage_environment(&mut command);
@@ -168,15 +191,30 @@ fn run(cli: Cli) -> Result<i32> {
             // No local R2 credentials, profile, endpoint or real bucket is needed.
             let output = command.output().context("run native celld dry-run build")?;
             if !output.status.success() {
-                std::io::stderr().write_all(&output.stdout)?;
+                eprintln!("cella: local build failed");
+                diagnostics.show(&String::from_utf8_lossy(&output.stderr), true);
+                diagnostics.show(&String::from_utf8_lossy(&output.stdout), true);
                 return Ok(output.status.code().unwrap_or(1));
             }
-            let deployment: NativeDeployment = serde_json::from_slice(&output.stdout)
-                .context("native dry-run returned invalid deployment JSON; no upload was sent")?;
+            let deployment: NativeDeployment = match serde_json::from_slice(&output.stdout) {
+                Ok(value) => value,
+                Err(error) => {
+                    diagnostics.show(&String::from_utf8_lossy(&output.stderr), true);
+                    diagnostics.show(&String::from_utf8_lossy(&output.stdout), true);
+                    return Err(error).context(
+                        "native dry-run returned invalid deployment JSON; no upload was sent",
+                    );
+                }
+            };
+            diagnostics.show(&String::from_utf8_lossy(&output.stderr), *verbose);
             if !deployment.dry_run || !celld_ctl_core::valid_deployment_id(&deployment.version) {
                 bail!("native build did not return a dry-run version; no upload was sent");
             }
             let payload = bundle::prepare(original_config, root, capture.path())?;
+            if !json {
+                eprintln!("  ✓ Built worker");
+                eprintln!("  Validating and publishing on host…");
+            }
             let pin = release::version_tag(&target.celld_version)?;
             let result = ssh
                 .deploy(
@@ -199,27 +237,44 @@ fn run(cli: Cli) -> Result<i32> {
                 .get("native_stderr")
                 .and_then(|v| v.as_str())
                 .context("host publish response has no native_stderr")?;
-            std::io::stderr().write_all(native_stderr.as_bytes())?;
+
             if result.get("version_id").and_then(|v| v.as_str())
                 != Some(deployment.version.as_str())
                 || native_output.get("version").and_then(|v| v.as_str())
                     != Some(deployment.version.as_str())
                 || native_output.get("dry_run").and_then(|v| v.as_bool()) != Some(false)
             {
+                diagnostics.show(native_stderr, true);
                 bail!("host returned an unexpected publication version or dry-run result");
             }
-            println!("{}", serde_json::to_string(native_output)?);
-            eprintln!(
-                "Activated {slug}: {} (source {})",
-                deployment.version,
-                revision.as_deref().unwrap_or("unknown")
-            );
+            diagnostics.show(native_stderr, *verbose);
+            if *json {
+                let mut value = native_output.clone();
+                value["slug"] = serde_json::json!(slug);
+                value["source_revision"] = serde_json::json!(revision);
+                println!("{}", serde_json::to_string(&value)?);
+            } else {
+                eprintln!("  ✓ Validated on host");
+                eprintln!("  ✓ Uploaded and activated\n");
+                println!("Version   {}", deployment.version);
+                println!(
+                    "Source    {}",
+                    cella::output::source_label(revision.as_deref())
+                );
+            }
             Ok(0)
         }
-        Action::Status | Action::Logs { .. } | Action::Deployments { .. } => {
+        Action::Status { .. } | Action::Logs { .. } | Action::Deployments { .. } => {
             let slug = cli.slug()?;
+            let json = matches!(
+                &cli.command,
+                Action::Status { json: true }
+                    | Action::Deployments {
+                        command: Deployments::List { json: true }
+                    }
+            );
             let request = match cli.command {
-                Action::Status => Request::Status { slug: slug.clone() },
+                Action::Status { .. } => Request::Status { slug: slug.clone() },
                 Action::Logs { lines } => Request::Logs {
                     slug: slug.clone(),
                     lines: lines.into(),
@@ -234,8 +289,12 @@ fn run(cli: Cli) -> Result<i32> {
                     .and_then(|v| v.as_str())
                     .context("invalid logs response: missing text")?;
                 print!("{text}");
-            } else {
+            } else if json {
                 println!("{}", serde_json::to_string_pretty(&value)?);
+            } else if matches!(request, Request::Status { .. }) {
+                print!("{}", cella::output::status(&value)?);
+            } else {
+                print!("{}", cella::output::deployments(&slug, &value)?);
             }
             Ok(0)
         }

@@ -60,10 +60,6 @@ pub fn local_esbuild(root: &Path) -> Option<PathBuf> {
 /// Keep the returned temporary directory alive until the native process exits.
 pub fn configure(command: &mut Command, root: &Path) -> Result<Option<tempfile::TempDir>> {
     let manager = detect(root);
-    eprintln!(
-        "Toolchain: {} (dependencies must already be installed)",
-        manager.name()
-    );
     if std::env::var_os("CELLD_ESBUILD").is_some() {
         return Ok(None);
     }

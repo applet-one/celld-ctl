@@ -42,6 +42,10 @@ pub fn release_url(tag: &str, platform: &str) -> Result<String> {
 }
 
 pub fn verify_output(output: &[u8], tag: &str) -> Result<()> {
+    verify_output_verbose(output, tag, false)
+}
+
+fn verify_output_verbose(output: &[u8], tag: &str, verbose: bool) -> Result<()> {
     let expected = version_tag(tag)?;
     let text = std::str::from_utf8(output)
         .context("celld --version was not UTF-8")?
@@ -61,23 +65,29 @@ pub fn verify_output(output: &[u8], tag: &str) -> Result<()> {
             .all(|line| line.contains(" WARN "))
     {
         for line in lines.into_iter().filter(|line| *line != version_line) {
-            eprintln!("cella: warning: celld --version: {line}");
+            if verbose || !crate::output::allocator_warning(line) {
+                eprintln!("cella: warning: celld --version: {line}");
+            }
         }
         return Ok(());
     }
     bail!("celld version mismatch: required {expected}, binary reported {text:?}; refusing to substitute another release")
 }
 
-fn verify(binary: &Path, tag: &str) -> Result<()> {
+fn verify(binary: &Path, tag: &str, verbose: bool) -> Result<()> {
     let output = Command::new(binary)
         .arg("--version")
         .stdin(Stdio::null())
         .output()
         .with_context(|| format!("verify cached celld {}", binary.display()))?;
     if !output.status.success() {
+        let mut diagnostics = crate::output::Diagnostics::default();
+        diagnostics.show(&String::from_utf8_lossy(&output.stderr), true);
+        diagnostics.show(&String::from_utf8_lossy(&output.stdout), true);
         bail!("cached celld --version failed: {}", output.status);
     }
-    verify_output(&output.stdout, tag)
+    crate::output::Diagnostics::default().show(&String::from_utf8_lossy(&output.stderr), verbose);
+    verify_output_verbose(&output.stdout, tag, verbose)
 }
 
 pub fn cache_root() -> Result<PathBuf> {
@@ -93,6 +103,10 @@ pub fn cache_root() -> Result<PathBuf> {
 }
 
 pub fn ensure(version: &str, cache: &Path) -> Result<PathBuf> {
+    ensure_verbose(version, cache, false)
+}
+
+pub fn ensure_verbose(version: &str, cache: &Path, verbose: bool) -> Result<PathBuf> {
     let tag = version_tag(version)?;
     let platform = target(std::env::consts::OS, std::env::consts::ARCH)?;
     let parent = cache.join("releases").join(&tag).join(platform);
@@ -100,7 +114,7 @@ pub fn ensure(version: &str, cache: &Path) -> Result<PathBuf> {
     let parent = parent.canonicalize().context("resolve celld cache path")?;
     let binary = parent.join("celld");
     if binary.exists() {
-        verify(&binary, &tag)?;
+        verify(&binary, &tag, verbose)?;
         return Ok(binary);
     }
     let staging = tempfile::tempdir_in(&parent)?;
@@ -146,7 +160,7 @@ pub fn ensure(version: &str, cache: &Path) -> Result<PathBuf> {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&staged, fs::Permissions::from_mode(0o755))?;
     }
-    verify(&staged, &tag)?;
+    verify(&staged, &tag, verbose)?;
     fs::rename(staged, &binary).context("atomically install exact celld release")?;
     Ok(binary)
 }

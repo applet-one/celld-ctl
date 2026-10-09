@@ -123,7 +123,8 @@ case "$request" in
   *'"op":"provision"'*|*'"op":"target"'*) cat >/dev/null; printf '%s\n' '{{"ok":true,"result":{{"slug":"my-app","celld_version":"1.2.3","enabled":false}}}}';;
   *'"op":"deploy"'*) cat > {payload}; id=$(printf '%s' "$request" | sed -n 's/.*"version_id":"\([^"]*\)".*/\1/p'); printf '%s\n' '{{"ok":true,"result":{{"version_id":"'"$id"'","native_output":{{"worker":"my-app","version":"'"$id"'","location":"s3://HOST_ONLY_PREFIX","dry_run":false}},"native_stderr":"host native uploaded\n","enabled":true}}}}';;
   *'"op":"logs"'*) cat >/dev/null; printf '%s\n' '{{"ok":true,"result":{{"text":"journal entry\n"}}}}';;
-  *'"op":"deployments"'*) cat >/dev/null; printf '%s\n' '{{"ok":true,"result":[{{"version_id":"native-version-id"}}]}}';;
+  *'"op":"deployments"'*) cat >/dev/null; printf '%s\n' '{{"ok":true,"result":[{{"id":1,"slug":"my-app","version_id":"native-version-id","source_revision":"commit-123","deployed_at":"2026-10-08 17:00:00"}}]}}';;
+  *'"op":"status"'*) cat >/dev/null; printf '%s\n' '{{"ok":true,"result":{{"target":{{"slug":"my-app","celld_version":"1.2.3","enabled":true}},"active":true,"version_id":"native-version-id","observed_version_id":"native-version-id","unit":"celld-cell@my-app.service","port":8101,"internal_port":18101,"public_port":9101}}}}';;
   *) cat >/dev/null; printf '%s\n' '{{"ok":true,"result":{{"slug":"my-app"}}}}';;
 esac
 "#,
@@ -185,7 +186,13 @@ esac
 fn ssh_only_publish_captures_native_output_without_credentials_or_project_changes() {
     let f = Fixture::new();
     let original = fs::read(f.root.join("wrangler.jsonc")).unwrap();
-    let output = f.run(&["deploy", "--source-revision", "commit-123"]);
+    let output = f.run(&[
+        "deploy",
+        "--json",
+        "--verbose",
+        "--source-revision",
+        "commit-123",
+    ]);
     assert!(
         output.status.success(),
         "{}",
@@ -240,6 +247,69 @@ fn ssh_only_publish_captures_native_output_without_credentials_or_project_change
     assert!(ssh_args.contains("-p\n22"));
     assert!(!ssh_args.contains("native-version-id"));
     assert!(!f._temp.path().join("native-out").exists());
+}
+
+#[test]
+fn deploy_output_modes_are_line_oriented_and_keep_diagnostics() {
+    for args in [
+        vec!["deploy"],
+        vec!["deploy", "--json"],
+        vec!["deploy", "--verbose"],
+    ] {
+        let f = Fixture::new();
+        let noisy = format!(
+            "printf '\\033[32m celld 1.2.3\\033[0m\\nTotal Upload: 1 KiB\\nBundled my-app (0.01 sec)    \\r\\n' >&2\nprintf '%s\\n' '<jemalloc>: option background_thread currently supports pthread only' 'warning: keep this diagnostic' >&2\n{}",
+            f.build_body("native-version-id")
+        );
+        f.native("1.2.3", &noisy);
+        let output = f.run(&args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("warning: keep this diagnostic"));
+        assert!(!stderr.contains('\r'));
+        assert!(!stderr.contains('\u{1b}'));
+        if args.contains(&"--json") {
+            let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(value["version"], "native-version-id");
+            assert_eq!(value["slug"], "my-app");
+            assert!(value["source_revision"].is_null());
+            assert!(!stderr.contains("✓"));
+        } else {
+            assert!(stdout.contains("Version   native-version-id"));
+            assert!(!stdout.contains("Nodes will adopt"));
+            assert!(!stdout.contains("s3://"));
+            assert!(stderr.contains("✓ Uploaded and activated"));
+        }
+        assert_eq!(
+            stderr.contains("Total Upload:"),
+            args.contains(&"--verbose")
+        );
+        assert_eq!(stderr.contains("<jemalloc>"), args.contains(&"--verbose"));
+        assert_eq!(stderr.contains("Toolchain:"), args.contains(&"--verbose"));
+    }
+}
+
+#[test]
+fn known_version_allocator_warning_is_quiet_unless_verbose() {
+    let f = Fixture::new();
+    let script = f.native_source("1.2.3", &f.build_body("id")).replace(
+        "echo 'celld 1.2.3';",
+        "printf '%s\\n' '2026 WARN celld::memory: the allocator will not run a background thread error=unknown/invalid value' 'celld 1.2.3';",
+    );
+    executable(&f.binary_path(), &script);
+    for (args, visible) in [(vec!["deploy"], false), (vec!["deploy", "--verbose"], true)] {
+        let output = f.run(&args);
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr).contains("allocator will not run"),
+            visible
+        );
+    }
 }
 
 #[test]
@@ -343,12 +413,26 @@ fn unused_dev_command_is_not_part_of_the_owner_deploy_client() {
 #[test]
 fn read_only_commands() {
     let f = Fixture::new();
-    assert!(f.run(&["status"]).status.success());
+    let status = f.run(&["status"]);
+    assert!(status.status.success());
+    let text = String::from_utf8_lossy(&status.stdout);
+    assert!(text.contains("my-app · running · enabled"));
+    assert!(text.contains("Runtime has adopted"));
+    assert!(text.contains("port 9101"));
     assert_eq!(f.run(&["logs", "--lines", "5"]).stdout, b"journal entry\n");
     assert!(
         String::from_utf8_lossy(&f.run(&["deployments", "list"]).stdout)
             .contains("native-version-id")
     );
+    let status_json = f.run(&["status", "--json"]);
+    assert!(status_json.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&status_json.stdout).unwrap();
+    assert_eq!(value["target"]["slug"], "my-app");
+    assert_eq!(value["active"], true);
+    let history_json = f.run(&["deployments", "list", "--json"]);
+    assert!(history_json.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&history_json.stdout).unwrap();
+    assert_eq!(value[0]["source_revision"], "commit-123");
     assert_eq!(f.requests()[1]["lines"], 5);
     assert!(!f.run(&["logs", "--lines", "1001"]).status.success());
 }
